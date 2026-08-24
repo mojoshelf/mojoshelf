@@ -3,7 +3,7 @@ name = "mojoshelf"
 version = "0.1.1"
 edition.workspace = true
 license.workspace = true
-description = "CLI for mojoshelf, the git-submodule-based Mojo book registry"
+description = "CLI for mojoshelf, the git-submodule-based Mojo tin registry"
 
 [[bin]]
 name = "shelf"
