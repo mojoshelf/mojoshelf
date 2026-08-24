@@ -17,7 +17,8 @@ submodule pinned to that commit.
 ## Prerequisites
 
 1. The `shelf` CLI:
-   `cargo install --locked --git https://github.com/mojoshelf/mojoshelf mojoshelf`
+   `pixi global install --channel https://mojoshelf.org/channel mojoshelf`
+   (or `cargo install --locked --git https://github.com/mojoshelf/mojoshelf mojoshelf`)
 2. A publish token in `SHELF_TOKEN`. The user gets one by signing in with
    GitHub at https://mojoshelf.org/authors and clicking "Generate publish
    token". Never print or log the token; if it is missing, ask the user to

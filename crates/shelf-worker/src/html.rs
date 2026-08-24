@@ -306,7 +306,10 @@ pub fn getting_started() -> String {
     let body = r#"<h1>Getting started</h1>
 <p>Install the CLI — this provides both <code>shelf</code> and the
 <code>pixi shelf</code> extension:</p>
-<pre><code>cargo install --locked --git https://github.com/mojoshelf/mojoshelf mojoshelf</code></pre>
+<pre><code>pixi global install --channel https://mojoshelf.org/channel mojoshelf</code></pre>
+<p>(No pixi? <code>cargo install --locked --git
+https://github.com/mojoshelf/mojoshelf mojoshelf</code> works too. The conda
+package is currently built for osx-arm64.)</p>
 <p>Books install in one of two modes.</p>
 <h2>Pixi mode: git source dependencies</h2>
 <p>Books become registry-pinned git dependencies in your <code>pixi.toml</code>,

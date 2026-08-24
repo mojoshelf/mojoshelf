@@ -54,4 +54,6 @@ cycles terminate via a visited set.
   `[package]` section in the book).
 - The CLI binary is named `shelf` and also installs as `pixi-shelf`, pixi's
   extension convention for the `pixi shelf` subcommand; the distributed
-  package is `mojoshelf`.
+  package is `mojoshelf`, shipped as a conda package on a static channel at
+  mojoshelf.org/channel (Worker assets) for `pixi global install`, with
+  `cargo install` from the repo as the fallback.

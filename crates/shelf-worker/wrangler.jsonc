@@ -8,6 +8,11 @@
   "build": {
     "command": "worker-build --release"
   },
+  // Static conda channel (repodata + .conda packages) served at /channel/*;
+  // requests that match an asset are served directly, the rest hit the Worker.
+  "assets": {
+    "directory": "public"
+  },
   "vars": {
     "GITHUB_CLIENT_ID": "Ov23liOOCMeZIJXcJABr"
   },

@@ -1,0 +1,19 @@
+# Conda package for the shelf CLI: installs the `shelf` and `pixi-shelf`
+# binaries into $PREFIX/bin. Built with `pixi build`, published to the
+# channel at https://mojoshelf.org/channel.
+package:
+  name: mojoshelf
+  version: 0.1.0
+
+source:
+  - path: .
+    use_gitignore: true
+
+build:
+  number: 0
+  script:
+    - cargo install --locked --path crates/mojoshelf --root $PREFIX
+
+requirements:
+  build:
+    - rust

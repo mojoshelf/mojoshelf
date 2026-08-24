@@ -16,10 +16,12 @@ pinned to the commit of a published version.
 ## Install the CLI (once)
 
 ```sh
-cargo install --locked --git https://github.com/mojoshelf/mojoshelf mojoshelf
+pixi global install --channel https://mojoshelf.org/channel mojoshelf
 ```
 
-This installs a binary named `shelf`.
+(Fallback without pixi:
+`cargo install --locked --git https://github.com/mojoshelf/mojoshelf mojoshelf`;
+the conda package is currently osx-arm64 only.)
 
 This installs binaries named `shelf` and `pixi-shelf`; pixi discovers the
 latter automatically, so `pixi shelf <command>` works out of the box.
