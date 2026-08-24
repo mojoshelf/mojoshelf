@@ -24,24 +24,46 @@ fn page(title: &str, active: &str, body: &str) -> String {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
 <style>
+  :root {{
+    color-scheme: light dark;
+    --bg: #ffffff; --fg: #1a1a1a; --muted: #555; --border: #ddd;
+    --code-bg: #f4f4f4;
+    --accent: #f4900c; /* 🔥 orange */
+    --danger-bg: #fee; --danger-border: #c66; --danger-fg: #900;
+    --note-bg: #fff8e0; --note-border: #e0c860;
+  }}
+  @media (prefers-color-scheme: dark) {{
+    :root {{
+      --bg: #141414; --fg: #e6e6e6; --muted: #a5a5a5; --border: #383838;
+      --code-bg: #262626;
+      --accent: #ffa733;
+      --danger-bg: #3a1616; --danger-border: #a05252; --danger-fg: #ff9d9d;
+      --note-bg: #322a10; --note-border: #8a742e;
+    }}
+  }}
   body {{ font-family: ui-sans-serif, system-ui, sans-serif; max-width: 52rem;
-         margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }}
+         margin: 2rem auto; padding: 0 1rem; background: var(--bg); color: var(--fg); }}
   h1 {{ font-size: 1.5rem; }}
-  nav {{ margin-bottom: 1.5rem; border-bottom: 1px solid #ddd; }}
+  a {{ color: var(--accent); }}
+  nav {{ margin-bottom: 1.5rem; border-bottom: 1px solid var(--border); }}
   nav a {{ display: inline-block; padding: .4rem .8rem; text-decoration: none;
-          color: #444; }}
-  nav a.active {{ border-bottom: 2px solid #e44d26; color: #1a1a1a; font-weight: 600; }}
+          color: var(--muted); }}
+  nav a.active {{ border-bottom: 2px solid var(--accent); color: var(--fg); font-weight: 600; }}
   table {{ border-collapse: collapse; width: 100%; }}
-  th, td {{ text-align: left; padding: .4rem .6rem; border-bottom: 1px solid #ddd; }}
-  code {{ background: #f4f4f4; padding: .1rem .3rem; border-radius: 3px; }}
-  form.book {{ margin: 1rem 0; padding: 1rem; border: 1px solid #ddd; border-radius: 6px; }}
+  th, td {{ text-align: left; padding: .4rem .6rem; border-bottom: 1px solid var(--border); }}
+  code {{ background: var(--code-bg); padding: .1rem .3rem; border-radius: 3px; }}
+  pre {{ background: var(--code-bg); padding: .6rem .8rem; border-radius: 6px;
+        overflow-x: auto; }}
+  pre code {{ background: none; padding: 0; }}
+  form.book {{ margin: 1rem 0; padding: 1rem; border: 1px solid var(--border);
+              border-radius: 6px; }}
   form.inline {{ display: inline; }}
   input, textarea {{ width: 100%; box-sizing: border-box; margin: .2rem 0 .6rem; padding: .3rem; }}
-  button.danger {{ background: #fee; border: 1px solid #c66; color: #900;
-                  border-radius: 4px; cursor: pointer; }}
-  .token {{ background: #fff8e0; border: 1px solid #e0c860; padding: 1rem;
+  button.danger {{ background: var(--danger-bg); border: 1px solid var(--danger-border);
+                  color: var(--danger-fg); border-radius: 4px; cursor: pointer; }}
+  .token {{ background: var(--note-bg); border: 1px solid var(--note-border); padding: 1rem;
            border-radius: 6px; word-break: break-all; }}
-  footer {{ margin-top: 2rem; font-size: .8rem; color: #777; }}
+  footer {{ margin-top: 2rem; font-size: .8rem; color: var(--muted); }}
 </style>
 </head>
 <body>
@@ -80,12 +102,27 @@ fn book_table(books: &[BookSummary]) -> String {
 
 pub fn home(books: &[BookSummary]) -> String {
     let body = format!(
-        "<h1>mojoshelf</h1>\
-         <p>Install a book with <code>shelf add &lt;name&gt;</code>. \
-         API: <a href=\"/api/books\">/api/books</a></p>{}",
+        r#"<h1>🔥</h1>
+<p>A registry of reusable Mojo books, installed as git submodules.</p>
+<h2>Getting started</h2>
+<p>Install the <code>shelf</code> CLI:</p>
+<pre><code>cargo install --locked --git https://github.com/mojoshelf/mojoshelf mojoshelf</code></pre>
+<p>Then, from your project's repo root, add a book from the shelf below:</p>
+<pre><code>shelf add &lt;name&gt;</code></pre>
+<p>The book and its dependencies land as submodules under <code>shelf/</code>,
+pinned to their published commits. See also <code>shelf search</code>,
+<code>shelf update</code>, and <code>shelf list</code>.</p>
+<h2>Publishing a book</h2>
+<p>Add a <code>shelf.toml</code> with your book's <code>name</code>,
+<code>version</code>, and dependencies at the repo root, commit and push, then
+sign in on the <a href="/authors">Authors</a> tab to generate a publish token.
+With <code>SHELF_TOKEN</code> exported, run <code>shelf publish</code> from the
+repo root.</p>
+<h2>Books</h2>
+{}"#,
         book_table(books)
     );
-    page("mojoshelf", "Books", &body)
+    page("🔥", "Books", &body)
 }
 
 pub fn authors_signed_out() -> String {
@@ -93,7 +130,7 @@ pub fn authors_signed_out() -> String {
 <p>Sign in with GitHub to publish books, manage your publish token, and
 delete versions or books you own.</p>
 <p><a href="/auth/login"><button>Sign in with GitHub</button></a></p>"#;
-    page("mojoshelf authors", "Authors", body)
+    page("🔥 authors", "Authors", body)
 }
 
 pub fn authors_dashboard(
@@ -169,7 +206,7 @@ it is shown only once:</p><p><code>{}</code></p>
 {books_section}"#,
         login = esc(login),
     );
-    page("mojoshelf authors", "Authors", &body)
+    page("🔥 authors", "Authors", &body)
 }
 
 pub fn admin(books: &[BookSummary], email: &str) -> String {
@@ -191,7 +228,7 @@ pub fn admin(books: &[BookSummary], email: &str) -> String {
         })
         .collect();
     let body = format!(
-        r#"<h1>mojoshelf admin</h1>
+        r#"<h1>🔥 admin</h1>
 <p>Signed in as {email}.</p>
 <h2>Register a book</h2>
 <form class="book" method="post" action="/admin/books">
@@ -204,5 +241,5 @@ pub fn admin(books: &[BookSummary], email: &str) -> String {
 {forms}"#,
         email = esc(email),
     );
-    page("mojoshelf admin", "Books", &body)
+    page("🔥 admin", "Books", &body)
 }
