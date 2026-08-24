@@ -1,6 +1,6 @@
 ---
 name: mojoshelf-consume
-description: Install and use reusable Mojo libraries ("tins") from the mojoshelf registry (mojoshelf.org) as pinned git submodules. Use when a Mojo project needs a third-party library, when the user mentions mojoshelf or `shelf add`, or when building/running code that imports an installed tin.
+description: Install and use reusable Mojo libraries ("tins") from the mojoshelf registry (mojoshelf.org) as registry-pinned pixi source dependencies or git submodules. Use when a Mojo project needs a third-party library, when the user mentions mojoshelf or `shelf add`, or when building/running code that imports an installed tin.
 license: MIT
 compatibility: Requires git and the shelf CLI (Rust); pixi recommended for the Mojo toolchain
 metadata:
@@ -10,7 +10,8 @@ metadata:
 # Consume a tin from mojoshelf
 
 mojoshelf (https://mojoshelf.org) is a registry of reusable Mojo libraries,
-called **tins**. Tins install as flat git submodules under `shelf/<name>`,
+called **tins**. Tins install either as registry-pinned pixi git source
+dependencies, or as flat git submodules under `shelf/<name>`,
 pinned to the commit of a published version.
 
 ## Install the CLI (once)

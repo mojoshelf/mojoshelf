@@ -1,6 +1,6 @@
 # mojoshelf
 
-A experimental, git submodule based, registry of reusable Mojo modules.
+An experimental registry of reusable Mojo tins, installed as pixi source dependencies or git submodules.
 
 See specs. Live at https://mojoshelf.org.
 

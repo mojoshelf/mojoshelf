@@ -6,7 +6,8 @@ The Mojo Registry is a helper tool, website and database to track re-usable Mojo
 packages.
 
 Since Mojo packages are not defined yet by Modular the current approach is to
-use git submodules.
+install tins as registry-pinned pixi git source dependencies (built by
+pixi-build-mojo) or as git submodules.
 
 This code will be deprecated once Modular supports packages.
 

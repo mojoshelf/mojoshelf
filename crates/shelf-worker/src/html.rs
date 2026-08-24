@@ -99,7 +99,7 @@ fn page(title: &str, active: &str, body: &str) -> String {
 {nav}
 <main>
 {body}
-<footer>mojoshelf — an experimental, git-submodule-based registry of reusable Mojo tins.</footer>
+<footer>mojoshelf — an experimental registry of reusable Mojo tins, installed as pixi source dependencies or git submodules.</footer>
 </main>
 </body>
 </html>"#
@@ -169,7 +169,7 @@ pub fn home(tins: &[TinSummary], q: &str) -> String {
     };
     let body = format!(
         r#"<h1>Mojo Shelf</h1>
-<p>A registry of reusable Mojo tins, installed as git submodules.
+<p>A registry of reusable Mojo tins, installed as pixi source dependencies or git submodules.
 New here? See <a href="/getting-started">Getting started</a>.</p>
 <form class="search" method="get" action="/">
 <input type="search" name="q" value="{q}" placeholder="Search name, description, tags…">
