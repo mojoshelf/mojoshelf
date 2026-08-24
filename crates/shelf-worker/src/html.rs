@@ -274,12 +274,31 @@ project. Submodule mode will be retired only when every published book is
 pixi-consumable and pixi-build has stabilized — and with a documented
 migration path (<code>shelf remove</code> each book, then
 <code>pixi shelf add</code>).</p>
-<h2>One name, two ecosystems</h2>
-<p>In pixi mode a book's name becomes a conda package name in your
-environment, so book names must not collide with conda packages your
-environment needs (this is why the zlib binding book is named
-<code>zlib-mojo</code> — conda-forge owns <code>zlib</code>). The Mojo import
-name is independent and stays natural: <code>from zlib import …</code>.</p>"#;
+<h2>The naming pattern: one book, two namespaces</h2>
+<p>In pixi mode a book's name becomes a <strong>conda package name</strong> in
+the consumer's environment. A book named after an existing conda package the
+environment also needs (directly or transitively) makes the dependency
+solver's job impossible — there cannot be two packages called
+<code>zlib</code> in one environment, and the real one is required by half
+the ecosystem.</p>
+<p>The pattern:</p>
+<ul>
+<li><strong>Book name</strong> — must be unique in the conda namespace.
+Before publishing, check <code>pixi search &lt;name&gt;</code> against
+conda-forge and the Modular channels. For bindings to an existing library,
+the convention is an <code>-mojo</code> suffix: <code>zlib-mojo</code>,
+<code>lancedb-mojo</code>.</li>
+<li><strong>Mojo import name</strong> — independent of the book name, set by
+the backend's <code>[package.build.config.pkg]</code> <code>name</code>
+field, so imports stay natural: <code>from zlib import inflate</code>,
+<code>from lancedb import …</code>.</li>
+<li><strong>Native shims</strong> — FFI books ship their C or Rust shims as
+pixi subpackages (<code>pixi-build-cmake</code>, or a
+<code>pixi-build-rattler-build</code> recipe) that the book run-depends on.
+The shim builds during install and lands in the environment's
+<code>lib/</code>, where the Mojo code dlopens it — consumers never run a
+build script.</li>
+</ul>"#;
     page("Mojo Shelf install modes", "Install modes", body)
 }
 
@@ -342,7 +361,12 @@ optional. Bump <code>version</code>, commit and push, then run
 <code>shelf publish</code> from the repo root with your publish token
 exported as <code>SHELF_TOKEN</code>; the registry takes the description and
 tags from <code>shelf.toml</code> on every publish. Dependencies must already
-be registered books.</p>"#
+be registered books.</p>
+<p><strong>Naming:</strong> the book name doubles as a conda package name in
+pixi mode, so pick one that no conda package already uses
+(<code>pixi search &lt;name&gt;</code>) — bindings conventionally take an
+<code>-mojo</code> suffix, while the Mojo import name stays natural. See
+<a href="/install-modes">install modes</a>.</p>"#
 }
 
 pub fn authors_signed_out() -> String {
