@@ -13,6 +13,7 @@ impl Registry {
     pub fn new(base: &str) -> Self {
         let agent = ureq::Agent::config_builder()
             .http_status_as_error(false)
+            .max_redirects(0)
             .build()
             .new_agent();
         Self {
@@ -23,6 +24,20 @@ impl Registry {
 
     fn parse<T: DeserializeOwned>(mut res: ureq::http::Response<ureq::Body>) -> Result<T> {
         let status = res.status().as_u16();
+        if (300..400).contains(&status) {
+            let target = res
+                .headers()
+                .get("location")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("?");
+            if target.contains("cloudflareaccess.com") {
+                bail!(
+                    "the registry route is gated by Cloudflare Access; \
+                     remove the Access application covering it and retry"
+                );
+            }
+            bail!("registry unexpectedly redirected to {target}");
+        }
         if status >= 400 {
             let msg = res
                 .body_mut()
