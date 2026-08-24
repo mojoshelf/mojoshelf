@@ -10,6 +10,25 @@ fn esc(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
+/// Adds a copy button to every <pre> block. Kept as a plain constant so the
+/// braces stay out of the format! template.
+const COPY_SCRIPT: &str = r#"<script>
+document.querySelectorAll("pre").forEach(function (pre) {
+  var btn = document.createElement("button");
+  btn.className = "copy-btn";
+  btn.type = "button";
+  btn.textContent = "copy";
+  btn.addEventListener("click", function () {
+    var code = pre.querySelector("code");
+    navigator.clipboard.writeText((code || pre).textContent).then(function () {
+      btn.textContent = "copied!";
+      setTimeout(function () { btn.textContent = "copy"; }, 1500);
+    });
+  });
+  pre.appendChild(btn);
+});
+</script>"#;
+
 fn page(title: &str, active: &str, body: &str) -> String {
     let item = |href: &str, label: &str| {
         let class = if label == active { " class=\"active\"" } else { "" };
@@ -79,8 +98,13 @@ fn page(title: &str, active: &str, body: &str) -> String {
   th, td {{ text-align: left; padding: .4rem .6rem; border-bottom: 1px solid var(--border); }}
   code {{ background: var(--code-bg); padding: .1rem .3rem; border-radius: 3px; }}
   pre {{ background: var(--code-bg); padding: .6rem .8rem; border-radius: 6px;
-        overflow-x: auto; }}
+        overflow-x: auto; position: relative; }}
   pre code {{ background: none; padding: 0; }}
+  .copy-btn {{ position: absolute; top: .4rem; right: .4rem; font-size: .75rem;
+              padding: .1rem .5rem; border: 1px solid var(--border);
+              border-radius: 4px; background: var(--bg); color: var(--muted);
+              cursor: pointer; opacity: 0; transition: opacity .15s; }}
+  pre:hover .copy-btn, .copy-btn:focus {{ opacity: 1; }}
   form.tin {{ margin: 1rem 0; padding: 1rem; border: 1px solid var(--border);
               border-radius: 6px; }}
   form.inline {{ display: inline; }}
@@ -101,8 +125,10 @@ fn page(title: &str, active: &str, body: &str) -> String {
 {body}
 <footer>mojoshelf — an experimental registry of reusable Mojo tins, installed as pixi source dependencies or git submodules.</footer>
 </main>
+{copy_script}
 </body>
-</html>"#
+</html>"#,
+        copy_script = COPY_SCRIPT,
     )
 }
 
@@ -220,8 +246,8 @@ pub fn tin(d: &shelf_core::TinDetail) -> String {
         Some(latest) => format!(
             r#"<h2>Install <span class="pick-one">— pick one</span></h2>
 <p class="install-label">the <code>pixi shelf</code> and <code>shelf</code> options need the
-shelf extension installed once:
-<code>pixi global install --channel https://mojoshelf.org/channel mojoshelf</code></p>
+shelf extension installed once:</p>
+<pre><code>pixi global install --channel https://mojoshelf.org/channel mojoshelf</code></pre>
 <p class="install-label">pixi mode: a registry-pinned git source dependency</p>
 <pre><code>pixi shelf add {name}</code></pre>
 <p class="install-label">the same, with plain pixi (no shelf extension needed)</p>
