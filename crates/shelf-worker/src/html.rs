@@ -16,10 +16,11 @@ fn page(title: &str, active: &str, body: &str) -> String {
         format!("<a href=\"{href}\"{class}>{label}</a>")
     };
     let nav = format!(
-        "<aside><div class=\"brand\">🔥 Mojo Shelf</div><nav>{}{}{}</nav></aside>",
+        "<aside><div class=\"brand\">🔥 Mojo Shelf</div><nav>{}{}{}{}</nav></aside>",
         item("/", "Books"),
         item("/authors", "Authors"),
         item("/getting-started", "Getting started"),
+        item("/install-modes", "Install modes"),
     );
     format!(
         r#"<!doctype html>
@@ -234,6 +235,52 @@ pub fn author(login: &str, books: &[BookSummary]) -> String {
         login = esc(login),
     );
     page(&format!("Mojo Shelf — {login}"), "Books", &body)
+}
+
+pub fn install_modes() -> String {
+    let body = r#"<h1>Install modes: pixi vs. submodules</h1>
+<p>Books install either as <strong>pixi git source dependencies</strong> or as
+<strong>git submodules</strong>. Both are pinned by the registry to published
+commits; they differ in who does the building and where the source lives.</p>
+<h2>What pixi mode does better</h2>
+<ul>
+<li>No submodule ceremony — no <code>--recurse-submodules</code>, detached
+HEADs, or <code>.gitmodules</code> noise in your repo.</li>
+<li>No <code>-I</code> flag bookkeeping — pixi builds each book into a
+<code>.mojopkg</code> via the <code>pixi-build-mojo</code> backend and imports
+just work.</li>
+<li>FFI books can ship their native shims as real conda artifacts instead of
+"run this script first" steps.</li>
+<li>It points where Modular's own tooling is heading, so migrating off
+mojoshelf later means editing a dependency list, not unwinding vendored
+submodules.</li>
+</ul>
+<h2>Why submodules still earn their keep</h2>
+<ul>
+<li><strong>Coverage</strong> — every book supports submodule mode today;
+pixi mode requires the book to be a pixi package, which the shelf is still
+adopting book by book.</li>
+<li><strong>Stability</strong> — pixi-build is a preview feature and its
+manifest schema can still change; submodules are boring, stable git.</li>
+<li><strong>Source in your tree</strong> — the dependency's code sits in your
+editor: greppable, LSP-navigable, patchable while debugging. With pixi
+dependencies you get a built package in a conda environment instead. This
+trade-off is permanent, not transitional.</li>
+</ul>
+<h2>Which should I use?</h2>
+<p>Prefer <a href="/getting-started">pixi mode</a> when every book you need
+supports it; fall back to submodules otherwise. The two modes coexist in one
+project. Submodule mode will be retired only when every published book is
+pixi-consumable and pixi-build has stabilized — and with a documented
+migration path (<code>shelf remove</code> each book, then
+<code>pixi shelf add</code>).</p>
+<h2>One name, two ecosystems</h2>
+<p>In pixi mode a book's name becomes a conda package name in your
+environment, so book names must not collide with conda packages your
+environment needs (this is why the zlib binding book is named
+<code>zlib-mojo</code> — conda-forge owns <code>zlib</code>). The Mojo import
+name is independent and stays natural: <code>from zlib import …</code>.</p>"#;
+    page("Mojo Shelf install modes", "Install modes", body)
 }
 
 pub fn getting_started() -> String {

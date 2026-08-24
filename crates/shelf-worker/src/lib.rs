@@ -17,6 +17,7 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     Router::new()
         .get_async("/", home)
         .get_async("/getting-started", getting_started)
+        .get_async("/install-modes", install_modes)
         .get_async("/books/:name", book_page)
         .get_async("/api/books", api_list)
         .get_async("/api/books/:name", api_book)
@@ -68,6 +69,10 @@ async fn home(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
 
 async fn getting_started(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
     Response::from_html(html::getting_started())
+}
+
+async fn install_modes(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
+    Response::from_html(html::install_modes())
 }
 
 async fn book_page(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
