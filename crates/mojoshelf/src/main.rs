@@ -286,6 +286,52 @@ fn info(reg: &Registry, name: &str) -> Result<()> {
     Ok(())
 }
 
+/// A book is pixi-consumable when its pixi.toml declares a [package] built
+/// by pixi-build-mojo. Warn (not fail) otherwise: FFI books legitimately
+/// stay submodule-only until the backend supports their build steps.
+fn warn_if_not_pixi_consumable(manifest: &Manifest) {
+    let ok = std::fs::read_to_string("pixi.toml")
+        .map(|text| text.contains("[package]") && text.contains("pixi-build-mojo"))
+        .unwrap_or(false);
+    if ok {
+        return;
+    }
+    let name = &manifest.name;
+    let version = &manifest.version;
+    eprintln!(
+        "warning: '{name}' is not consumable as a pixi source dependency — \
+pixi.toml has no [package] section with the pixi-build-mojo backend, so \
+consumers can only install it in submodule mode.\n\
+To fix: make the library a Mojo package (src/{name}/__init__.mojo — \
+`from {name} import …` keeps working for -I consumers) and add to pixi.toml:\n\
+\n\
+    [workspace]                     # existing section\n\
+    preview = [\"pixi-build\"]\n\
+\n\
+    [package]\n\
+    name = \"{name}\"\n\
+    version = \"{version}\"\n\
+\n\
+    [package.build]\n\
+    backend = {{ name = \"pixi-build-mojo\", version = \"0.*\" }}\n\
+\n\
+    [package.build.config.pkg]\n\
+    path = \"src/{name}\"\n\
+    name = \"{name}\"\n\
+\n\
+    [package.host-dependencies]\n\
+    mojo-compiler = \"==1.0.0\"\n\
+\n\
+    [package.build-dependencies]\n\
+    mojo-compiler = \"==1.0.0\"\n\
+\n\
+    [package.run-dependencies]\n\
+    mojo-compiler = \"==1.0.0\"\n\
+\n\
+Then verify with `pixi build` before publishing."
+    );
+}
+
 fn publish(reg: &Registry) -> Result<()> {
     let manifest_path = Path::new("shelf.toml");
     let raw = std::fs::read_to_string(manifest_path)
@@ -304,14 +350,7 @@ fn publish(reg: &Registry) -> Result<()> {
     let commit_sha = git::head_commit(&cwd)?;
     let origin = git::git(&cwd, &["remote", "get-url", "origin"])
         .context("no 'origin' remote; publishing needs a public repo URL")?;
-    match std::fs::read_to_string("pixi.toml") {
-        Ok(text) if text.contains("[package]") => {}
-        _ => eprintln!(
-            "warning: no [package] section in pixi.toml — the book will be \
-             installable as a git submodule but not as a pixi source dependency \
-             (pixi-build-mojo backend)"
-        ),
-    }
+    warn_if_not_pixi_consumable(&manifest);
     reg.publish(&PublishRequest {
         name: manifest.name.clone(),
         version: manifest.version.clone(),
