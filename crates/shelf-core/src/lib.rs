@@ -9,6 +9,8 @@ pub struct BookSummary {
     pub url: String,
     pub description: Option<String>,
     pub author: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
     pub latest_version: Option<String>,
 }
 
@@ -28,8 +30,13 @@ pub struct BookDetail {
     pub url: String,
     pub description: Option<String>,
     pub author: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
     /// Newest first.
     pub versions: Vec<VersionInfo>,
+    /// Names of other books with a published version depending on this one.
+    #[serde(default)]
+    pub dependents: Vec<String>,
 }
 
 /// One entry of the flat install set from `GET /api/books/:name/resolve`.
@@ -50,6 +57,10 @@ pub struct PublishRequest {
     pub version: String,
     pub commit_sha: String,
     pub url: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
     pub dependencies: Vec<String>,
 }
 
@@ -65,6 +76,10 @@ pub struct Manifest {
     pub name: String,
     pub version: String,
     #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
     pub books: Vec<String>,
 }
 
@@ -76,6 +91,14 @@ pub fn latest_version<'a>(versions: impl IntoIterator<Item = &'a str>) -> Option
         .filter_map(|v| semver::Version::parse(v).ok().map(|p| (p, v)))
         .max_by(|a, b| a.0.cmp(&b.0))
         .map(|(_, v)| v)
+}
+
+/// Splits a stored/submitted comma-separated tag string into clean tags.
+pub fn split_tags(s: &str) -> Vec<String> {
+    s.split(',')
+        .map(|t| t.trim().to_lowercase())
+        .filter(|t| !t.is_empty())
+        .collect()
 }
 
 pub fn is_full_sha(s: &str) -> bool {

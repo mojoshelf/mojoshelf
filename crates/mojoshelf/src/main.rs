@@ -228,6 +228,12 @@ fn info(reg: &Registry, name: &str) -> Result<()> {
     if let Some(desc) = &d.description {
         println!("  description: {desc}");
     }
+    if !d.tags.is_empty() {
+        println!("  tags: {}", d.tags.join(", "));
+    }
+    if !d.dependents.is_empty() {
+        println!("  depended on by: {}", d.dependents.join(", "));
+    }
     if d.versions.is_empty() {
         println!("  no published versions");
     }
@@ -270,6 +276,8 @@ fn publish(reg: &Registry) -> Result<()> {
         version: manifest.version.clone(),
         commit_sha: commit_sha.clone(),
         url: https_url(&origin),
+        description: manifest.description.clone(),
+        tags: manifest.tags.clone(),
         dependencies: manifest.books,
     })?;
     println!(

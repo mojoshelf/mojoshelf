@@ -16,11 +16,14 @@ use worker::*;
 pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     Router::new()
         .get_async("/", home)
+        .get_async("/getting-started", getting_started)
+        .get_async("/books/:name", book_page)
         .get_async("/api/books", api_list)
         .get_async("/api/books/:name", api_book)
         .get_async("/api/books/:name/resolve", api_resolve)
         .post_async("/api/publish", api_publish)
         .get_async("/authors", authors::page)
+        .get_async("/authors/:login", authors::author_page)
         .get_async("/auth/login", authors::login)
         .get_async("/auth/callback", authors::callback)
         .post_async("/auth/logout", authors::logout)
@@ -61,6 +64,18 @@ fn query_param(req: &Request, key: &str) -> Option<String> {
 async fn home(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let books = db::list_books(&ctx.env.d1("DB")?, "").await?;
     Response::from_html(html::home(&books))
+}
+
+async fn getting_started(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
+    Response::from_html(html::getting_started())
+}
+
+async fn book_page(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let name = ctx.param("name").expect("route param");
+    match db::book_detail(&ctx.env.d1("DB")?, name).await? {
+        Some(detail) => Response::from_html(html::book(&detail)),
+        None => Response::error("book not found", 404),
+    }
 }
 
 async fn api_list(req: Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -148,6 +163,8 @@ async fn api_publish(mut req: Request, ctx: RouteContext<()>) -> Result<Response
         return error_json("url is required", 400);
     }
 
+    let description = body.description.as_deref().map(str::trim).filter(|d| !d.is_empty());
+    let tags = shelf_core::split_tags(&body.tags.join(",")).join(",");
     let book = match db::book_by_name(&d1, &body.name).await? {
         Some(existing) => {
             if existing.author_id.is_some() && existing.author_id != Some(author.id) {
@@ -156,11 +173,11 @@ async fn api_publish(mut req: Request, ctx: RouteContext<()>) -> Result<Response
                     403,
                 );
             }
-            db::claim_book(&d1, existing.id, &body.url, author.id).await?;
+            db::claim_book(&d1, existing.id, &body.url, author.id, description, &tags).await?;
             existing
         }
         None => {
-            db::create_book(&d1, &body.name, &body.url, author.id).await?;
+            db::create_book(&d1, &body.name, &body.url, author.id, description, &tags).await?;
             db::book_by_name(&d1, &body.name)
                 .await?
                 .ok_or_else(|| worker::Error::RustError("book vanished after insert".into()))?

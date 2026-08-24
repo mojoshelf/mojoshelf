@@ -197,6 +197,21 @@ async fn owned_book(
     Ok(Ok((author, book)))
 }
 
+/// Public page listing all books published by one author.
+pub async fn author_page(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let login = ctx.param("login").expect("route param");
+    let d1 = ctx.env.d1("DB")?;
+    if db::author_by_login(&d1, login).await?.is_none() {
+        return Response::error("author not found", 404);
+    }
+    let books: Vec<_> = db::list_books(&d1, "")
+        .await?
+        .into_iter()
+        .filter(|b| b.author.as_deref() == Some(login.as_str()))
+        .collect();
+    Response::from_html(html::author(login, &books))
+}
+
 pub async fn delete_book(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let (_, book) = match owned_book(&req, &ctx).await? {
         Ok(v) => v,

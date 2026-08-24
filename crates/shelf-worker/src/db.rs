@@ -15,6 +15,14 @@ pub struct BookRow {
     pub description: Option<String>,
     pub author_id: Option<i64>,
     pub author: Option<String>,
+    /// Comma-separated in storage; split via `shelf_core::split_tags`.
+    pub tags: Option<String>,
+}
+
+impl BookRow {
+    pub fn tag_list(&self) -> Vec<String> {
+        shelf_core::split_tags(self.tags.as_deref().unwrap_or(""))
+    }
 }
 
 #[derive(Deserialize)]
@@ -26,7 +34,7 @@ pub struct AuthorRow {
     pub token_hash: Option<String>,
 }
 
-const BOOK_SELECT: &str = "SELECT b.id, b.name, b.url, b.description, b.author_id, \
+const BOOK_SELECT: &str = "SELECT b.id, b.name, b.url, b.description, b.author_id, b.tags, \
     a.github_login AS author FROM books b LEFT JOIN authors a ON a.id = b.author_id";
 
 #[derive(Deserialize)]
@@ -76,7 +84,7 @@ pub async fn list_books(d1: &D1Database, q: &str) -> Result<Vec<BookSummary>> {
     let books = d1
         .prepare(&format!(
             "{BOOK_SELECT} WHERE ?1 = '' OR b.name LIKE ?2 OR b.description LIKE ?2 \
-             ORDER BY b.name"
+             OR b.tags LIKE ?2 ORDER BY b.name"
         ))
         .bind(&[q.into(), pattern.into()])?
         .all()
@@ -105,6 +113,7 @@ pub async fn list_books(d1: &D1Database, q: &str) -> Result<Vec<BookSummary>> {
                 shelf_core::latest_version(vs.iter().map(String::as_str)).map(str::to_string)
             });
             BookSummary {
+                tags: b.tag_list(),
                 name: b.name,
                 url: b.url,
                 description: b.description,
@@ -138,6 +147,8 @@ pub async fn book_detail(d1: &D1Database, name: &str) -> Result<Option<BookDetai
         });
     }
     Ok(Some(BookDetail {
+        tags: book.tag_list(),
+        dependents: dependents_of(d1, book.id).await?,
         name: book.name,
         url: book.url,
         description: book.description,
@@ -217,28 +228,81 @@ pub async fn books_of_author(d1: &D1Database, author_id: i64) -> Result<Vec<Book
         .results::<BookRow>()
 }
 
-pub async fn create_book(d1: &D1Database, name: &str, url: &str, author_id: i64) -> Result<()> {
-    d1.prepare("INSERT INTO books (name, url, author_id) VALUES (?1, ?2, ?3)")
-        .bind(&[name.into(), url.into(), JsValue::from(author_id as f64)])?
-        .run()
-        .await?;
+pub async fn create_book(
+    d1: &D1Database,
+    name: &str,
+    url: &str,
+    author_id: i64,
+    description: Option<&str>,
+    tags: &str,
+) -> Result<()> {
+    d1.prepare(
+        "INSERT INTO books (name, url, author_id, description, tags) \
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+    )
+    .bind(&[
+        name.into(),
+        url.into(),
+        JsValue::from(author_id as f64),
+        description.map(JsValue::from).unwrap_or(JsValue::NULL),
+        tags.into(),
+    ])?
+    .run()
+    .await?;
     Ok(())
 }
 
-/// Sets/refreshes ownership and URL when an author publishes.
-pub async fn claim_book(d1: &D1Database, book_id: i64, url: &str, author_id: i64) -> Result<()> {
+/// Sets/refreshes ownership, URL, and shelf.toml metadata when an author
+/// publishes.
+pub async fn claim_book(
+    d1: &D1Database,
+    book_id: i64,
+    url: &str,
+    author_id: i64,
+    description: Option<&str>,
+    tags: &str,
+) -> Result<()> {
     d1.prepare(
-        "UPDATE books SET url = ?2, author_id = ?3, \
+        "UPDATE books SET url = ?2, author_id = ?3, description = ?4, tags = ?5, \
          updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
     )
     .bind(&[
         JsValue::from(book_id as f64),
         url.into(),
         JsValue::from(author_id as f64),
+        description.map(JsValue::from).unwrap_or(JsValue::NULL),
+        tags.into(),
     ])?
     .run()
     .await?;
     Ok(())
+}
+
+pub async fn author_by_login(d1: &D1Database, login: &str) -> Result<Option<AuthorRow>> {
+    d1.prepare("SELECT id, github_id, github_login, token_hash FROM authors WHERE github_login = ?1")
+        .bind(&[login.into()])?
+        .first::<AuthorRow>(None)
+        .await
+}
+
+/// Names of other books with a published version depending on this book.
+pub async fn dependents_of(d1: &D1Database, book_id: i64) -> Result<Vec<String>> {
+    #[derive(Deserialize)]
+    struct Row {
+        name: String,
+    }
+    let rows = d1
+        .prepare(
+            "SELECT DISTINCT b.name AS name FROM dependencies d \
+             JOIN versions v ON v.id = d.version_id \
+             JOIN books b ON b.id = v.book_id \
+             WHERE d.depends_on_book_id = ?1 AND v.book_id != ?1 ORDER BY b.name",
+        )
+        .bind(&[JsValue::from(book_id as f64)])?
+        .all()
+        .await?
+        .results::<Row>()?;
+    Ok(rows.into_iter().map(|r| r.name).collect())
 }
 
 /// How many versions of OTHER books declare a dependency on this book.

@@ -10,6 +10,7 @@
 | name        | TEXT    | unique, not null                  |
 | url         | TEXT    | git clone URL, not null           |
 | description | TEXT    |                                   |
+| tags        | TEXT    | comma-separated, lowercased       |
 | author_id   | INTEGER | FK -> authors; the owner          |
 | created_at  | TEXT    | ISO 8601                          |
 | updated_at  | TEXT    | ISO 8601                          |
@@ -27,7 +28,9 @@
 Authors sign in with GitHub OAuth on the website's Authors tab, where they
 generate a publish token (shown once, stored hashed) and can delete versions
 of their books or a whole book. Deleting is refused while another book's
-published version depends on the book.
+published version depends on the book. Search matches name, description, and
+tags. Each book has a public page with its versions, dependencies, and
+dependents; each author has a public page listing their books.
 
 ### versions
 
@@ -58,11 +61,14 @@ Lives at the book's repo root:
 ```toml
 name = "lightbug_http"
 version = "0.2.0"
+description = "HTTP framework for Mojo"
+tags = ["http", "networking"]
 books = ["small_time"]
 ```
 
-A book with no dependencies may omit `books`. `name` and `version` are
-required; authors bump `version` and commit before publishing.
+`name` and `version` are required; the rest are optional. Authors bump
+`version` and commit before publishing. The registry takes the book's
+description and tags from `shelf.toml` on every publish.
 
 ## CLI
 
