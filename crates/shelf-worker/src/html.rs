@@ -89,6 +89,9 @@ fn page(title: &str, active: &str, body: &str) -> String {
                   color: var(--danger-fg); border-radius: 4px; cursor: pointer; }}
   .token {{ background: var(--note-bg); border: 1px solid var(--note-border); padding: 1rem;
            border-radius: 6px; word-break: break-all; }}
+  .pick-one {{ font-size: .85rem; font-weight: 400; color: var(--muted); }}
+  .install-label {{ margin: .8rem 0 .25rem; font-size: .85rem; color: var(--muted); }}
+  .install-label + pre {{ margin-top: 0; }}
   footer {{ margin-top: 2rem; font-size: .8rem; color: var(--muted); }}
 </style>
 </head>
@@ -215,12 +218,13 @@ pub fn tin(d: &shelf_core::TinDetail) -> String {
         .unwrap_or_default();
     let install = match d.versions.first() {
         Some(latest) => format!(
-            "<pre><code># pixi mode (git source dependency)\n\
-             pixi shelf add {name}\n\
-             # …or with plain pixi:\n\
-             pixi add --git {url} --rev {sha} {name}\n\
-             # submodule mode\n\
-             shelf add {name}</code></pre>",
+            r#"<h2>Install <span class="pick-one">— pick one</span></h2>
+<p class="install-label">pixi mode: a registry-pinned git source dependency</p>
+<pre><code>pixi shelf add {name}</code></pre>
+<p class="install-label">the same, with plain pixi (no shelf CLI needed)</p>
+<pre><code>pixi add --git {url} --rev {sha} {name}</code></pre>
+<p class="install-label">submodule mode: pinned source under <code>shelf/{name}</code></p>
+<pre><code>shelf add {name}</code></pre>"#,
             name = esc(&d.name),
             url = esc(&d.url),
             sha = esc(&latest.commit_sha),
