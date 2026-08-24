@@ -102,7 +102,7 @@ fn book_table(books: &[BookSummary]) -> String {
 
 pub fn home(books: &[BookSummary]) -> String {
     let body = format!(
-        r#"<h1>🔥</h1>
+        r#"<h1>Mojo Shelf</h1>
 <p>A registry of reusable Mojo books, installed as git submodules.</p>
 <h2>Getting started</h2>
 <p>Install the <code>shelf</code> CLI:</p>
@@ -122,7 +122,7 @@ repo root.</p>
 {}"#,
         book_table(books)
     );
-    page("🔥", "Books", &body)
+    page("Mojo Shelf", "Books", &body)
 }
 
 pub fn authors_signed_out() -> String {
@@ -130,7 +130,7 @@ pub fn authors_signed_out() -> String {
 <p>Sign in with GitHub to publish books, manage your publish token, and
 delete versions or books you own.</p>
 <p><a href="/auth/login"><button>Sign in with GitHub</button></a></p>"#;
-    page("🔥 authors", "Authors", body)
+    page("Mojo Shelf authors", "Authors", body)
 }
 
 pub fn authors_dashboard(
@@ -206,7 +206,7 @@ it is shown only once:</p><p><code>{}</code></p>
 {books_section}"#,
         login = esc(login),
     );
-    page("🔥 authors", "Authors", &body)
+    page("Mojo Shelf authors", "Authors", &body)
 }
 
 pub fn admin(books: &[BookSummary], email: &str) -> String {
@@ -228,7 +228,7 @@ pub fn admin(books: &[BookSummary], email: &str) -> String {
         })
         .collect();
     let body = format!(
-        r#"<h1>🔥 admin</h1>
+        r#"<h1>Mojo Shelf admin</h1>
 <p>Signed in as {email}.</p>
 <h2>Register a book</h2>
 <form class="book" method="post" action="/admin/books">
@@ -241,5 +241,5 @@ pub fn admin(books: &[BookSummary], email: &str) -> String {
 {forms}"#,
         email = esc(email),
     );
-    page("🔥 admin", "Books", &body)
+    page("Mojo Shelf admin", "Books", &body)
 }
