@@ -112,12 +112,7 @@ pub fn home(books: &[BookSummary]) -> String {
 <p>The book and its dependencies land as submodules under <code>shelf/</code>,
 pinned to their published commits. See also <code>shelf search</code>,
 <code>shelf update</code>, and <code>shelf list</code>.</p>
-<h2>Publishing a book</h2>
-<p>Add a <code>shelf.toml</code> with your book's <code>name</code>,
-<code>version</code>, and dependencies at the repo root, commit and push, then
-sign in on the <a href="/authors">Authors</a> tab to generate a publish token.
-With <code>SHELF_TOKEN</code> exported, run <code>shelf publish</code> from the
-repo root.</p>
+<p>Want to publish your own book? See the <a href="/authors">Authors</a> tab.</p>
 <h2>Books</h2>
 {}"#,
         book_table(books)
@@ -125,12 +120,28 @@ repo root.</p>
     page("Mojo Shelf", "Books", &body)
 }
 
+fn publishing_section() -> &'static str {
+    r#"<h2>Publishing a book</h2>
+<p>A book is a public git repo with a <code>shelf.toml</code> at its root:</p>
+<pre><code>name = "lightbug_http"
+version = "0.2.0"
+# other books this one depends on; omit if none
+books = ["small_time"]</code></pre>
+<p>Bump <code>version</code>, commit and push, then run <code>shelf publish</code>
+from the repo root with your publish token exported as <code>SHELF_TOKEN</code>.
+Dependencies must already be registered books.</p>"#
+}
+
 pub fn authors_signed_out() -> String {
-    let body = r#"<h1>Authors</h1>
+    let body = format!(
+        r#"<h1>Authors</h1>
 <p>Sign in with GitHub to publish books, manage your publish token, and
 delete versions or books you own.</p>
-<p><a href="/auth/login"><button>Sign in with GitHub</button></a></p>"#;
-    page("Mojo Shelf authors", "Authors", body)
+<p><a href="/auth/login"><button>Sign in with GitHub</button></a></p>
+{}"#,
+        publishing_section()
+    );
+    page("Mojo Shelf authors", "Authors", &body)
 }
 
 pub fn authors_dashboard(
@@ -203,8 +214,10 @@ it is shown only once:</p><p><code>{}</code></p>
 <h2>Publish token</h2>
 {token_section}
 <h2>Your books</h2>
-{books_section}"#,
+{books_section}
+{publishing}"#,
         login = esc(login),
+        publishing = publishing_section(),
     );
     page("Mojo Shelf authors", "Authors", &body)
 }
