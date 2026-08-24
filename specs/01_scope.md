@@ -42,6 +42,9 @@ cycles terminate via a visited set.
 
 - Database: Cloudflare D1.
 - Admin auth: Cloudflare Access gates the admin routes; public routes are open.
+- Authors self-register with GitHub OAuth on the website's Authors tab and get
+  a registry-issued publish token. The first publish of a name registers the
+  book, owned by the publisher; owners can delete versions or whole books.
 - A book is: name, git URL, description, plus published versions
   (version, commit, dependencies).
 - The CLI installs books as git submodules under `shelf/<name>`.

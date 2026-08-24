@@ -1,0 +1,5 @@
+/target
+/crates/shelf-worker/build
+node_modules
+.wrangler
+.dev.vars

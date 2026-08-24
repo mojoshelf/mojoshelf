@@ -1,0 +1,23 @@
+{
+  "name": "mojoshelf",
+  "main": "build/worker/shim.mjs",
+  "compatibility_date": "2026-08-01",
+  // Only serve on the custom domain so Cloudflare Access can gate every route.
+  "workers_dev": false,
+  "routes": [{ "pattern": "mojoshelf.org", "custom_domain": true }],
+  "build": {
+    "command": "worker-build --release"
+  },
+  "vars": {
+    "GITHUB_CLIENT_ID": "Ov23liOOCMeZIJXcJABr"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "mojoshelf",
+      "database_id": "3425e497-9fa9-4211-9531-24d232b9c214",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "observability": { "enabled": true }
+}

@@ -4,14 +4,30 @@
 
 ### books
 
-| field       | type    | notes                   |
-| ----------- | ------- | ----------------------- |
-| id          | INTEGER | primary key             |
-| name        | TEXT    | unique, not null        |
-| url         | TEXT    | git clone URL, not null |
-| description | TEXT    |                         |
-| created_at  | TEXT    | ISO 8601                |
-| updated_at  | TEXT    | ISO 8601                |
+| field       | type    | notes                             |
+| ----------- | ------- | --------------------------------- |
+| id          | INTEGER | primary key                       |
+| name        | TEXT    | unique, not null                  |
+| url         | TEXT    | git clone URL, not null           |
+| description | TEXT    |                                   |
+| author_id   | INTEGER | FK -> authors; the owner          |
+| created_at  | TEXT    | ISO 8601                          |
+| updated_at  | TEXT    | ISO 8601                          |
+
+### authors
+
+| field        | type    | notes                                  |
+| ------------ | ------- | -------------------------------------- |
+| id           | INTEGER | primary key                            |
+| github_id    | INTEGER | unique, not null                       |
+| github_login | TEXT    | not null                               |
+| token_hash   | TEXT    | SHA-256 of the publish token           |
+| created_at   | TEXT    | ISO 8601                               |
+
+Authors sign in with GitHub OAuth on the website's Authors tab, where they
+generate a publish token (shown once, stored hashed) and can delete versions
+of their books or a whole book. Deleting is refused while another book's
+published version depends on the book.
 
 ### versions
 
@@ -88,10 +104,11 @@ Shows a book's description, URL, versions, and dependencies.
 ### shelf publish
 
 Run from a book's repo root. Reads `name`, `version`, and dependencies from
-`shelf.toml` and takes the current HEAD commit, then registers
-`(name, version, commit, dependencies)` with the registry. Fails if the
-working tree is dirty, if HEAD is not pushed, if the version already exists
-for the book, or if the book is not already registered by an admin.
-Authenticates with a Cloudflare Access service token (`SHELF_CLIENT_ID` /
-`SHELF_CLIENT_SECRET`). Authors receive their service-token credentials from
-an admin; any credentialed author can publish any book.
+`shelf.toml`, takes the current HEAD commit and the `origin` remote URL
+(ssh remotes are converted to https), then registers
+`(name, version, commit, url, dependencies)` with the registry. The first
+publish of a new name registers the book, owned by the publishing author;
+later publishes require the same owner. Fails if the working tree is dirty,
+if HEAD is not pushed, or if the version already exists for the book.
+Authenticates with the author's publish token (`SHELF_TOKEN`), obtained on
+the website's Authors tab after GitHub sign-in.
