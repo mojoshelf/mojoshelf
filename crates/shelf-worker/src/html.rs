@@ -68,6 +68,13 @@ fn page(title: &str, active: &str, body: &str) -> String {
   }}
   .tag {{ display: inline-block; background: var(--code-bg); color: var(--muted);
          border-radius: 10px; padding: 0 .5rem; font-size: .8rem; margin: 0 .15rem .15rem 0; }}
+  form.search {{ display: flex; gap: .5rem; margin: 1rem 0; }}
+  form.search input {{ flex: 1; margin: 0; padding: .45rem .6rem;
+                      border: 1px solid var(--border); border-radius: 6px;
+                      background: var(--bg); color: var(--fg); }}
+  form.search button {{ padding: .45rem .9rem; border: 1px solid var(--accent);
+                       background: var(--accent); color: #fff; border-radius: 6px;
+                       cursor: pointer; }}
   table {{ border-collapse: collapse; width: 100%; }}
   th, td {{ text-align: left; padding: .4rem .6rem; border-bottom: 1px solid var(--border); }}
   code {{ background: var(--code-bg); padding: .1rem .3rem; border-radius: 3px; }}
@@ -146,14 +153,30 @@ fn book_table(books: &[BookSummary]) -> String {
     )
 }
 
-pub fn home(books: &[BookSummary]) -> String {
+pub fn home(books: &[BookSummary], q: &str) -> String {
+    let result_line = if q.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "<p>{} book{} matching <strong>{}</strong> — <a href=\"/\">clear</a></p>",
+            books.len(),
+            if books.len() == 1 { "" } else { "s" },
+            esc(q),
+        )
+    };
     let body = format!(
         r#"<h1>Mojo Shelf</h1>
 <p>A registry of reusable Mojo books, installed as git submodules.
 New here? See <a href="/getting-started">Getting started</a>.</p>
+<form class="search" method="get" action="/">
+<input type="search" name="q" value="{q}" placeholder="Search name, description, tags…">
+<button>Search</button>
+</form>
+{result_line}
 <h2>Books</h2>
-{}"#,
-        book_table(books)
+{table}"#,
+        q = esc(q),
+        table = book_table(books),
     );
     page("Mojo Shelf", "Books", &body)
 }

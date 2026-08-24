@@ -62,9 +62,10 @@ fn query_param(req: &Request, key: &str) -> Option<String> {
     })
 }
 
-async fn home(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let books = db::list_books(&ctx.env.d1("DB")?, "").await?;
-    Response::from_html(html::home(&books))
+async fn home(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let q = query_param(&req, "q").unwrap_or_default();
+    let books = db::list_books(&ctx.env.d1("DB")?, &q).await?;
+    Response::from_html(html::home(&books, &q))
 }
 
 async fn getting_started(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
