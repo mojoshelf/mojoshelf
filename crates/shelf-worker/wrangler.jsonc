@@ -1,5 +1,6 @@
 {
   "name": "mojoshelf",
+  "account_id": "24828d2a24b818aa2e994213d8a562c6",
   "main": "build/worker/shim.mjs",
   "compatibility_date": "2026-08-01",
   // Only serve on the custom domain so Cloudflare Access can gate every route.

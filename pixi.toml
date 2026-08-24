@@ -2,7 +2,7 @@
 name = "mojoshelf-cli"
 preview = ["pixi-build"]
 channels = ["conda-forge"]
-platforms = ["osx-arm64"]
+platforms = ["osx-arm64", "linux-64", "linux-aarch64"]
 
 # Builds the shelf CLI as a conda package (recipe.yaml) so it can be
 # published to the channel served at https://mojoshelf.org/channel and

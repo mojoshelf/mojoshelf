@@ -1,0 +1,73 @@
+name: release-cli
+
+# Builds the mojoshelf CLI conda package for every supported platform,
+# refreshes the static channel under crates/shelf-worker/public/channel,
+# commits it to main, and (when CLOUDFLARE_API_TOKEN is configured) deploys
+# the Worker so https://mojoshelf.org/channel serves the new packages.
+on:
+  push:
+    tags: ["cli-v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-64
+          - os: ubuntu-24.04-arm
+            platform: linux-aarch64
+          - os: macos-15
+            platform: osx-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: prefix-dev/setup-pixi@v0
+        with:
+          run-install: false
+      - run: pixi build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: conda-${{ matrix.platform }}
+          path: mojoshelf-*.conda
+          if-no-files-found: error
+
+  assemble:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: prefix-dev/setup-pixi@v0
+        with:
+          run-install: false
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Add packages to the channel and reindex
+        run: |
+          for p in linux-64 linux-aarch64 osx-arm64; do
+            mkdir -p "crates/shelf-worker/public/channel/$p"
+            cp dist/conda-$p/*.conda "crates/shelf-worker/public/channel/$p/"
+          done
+          pixi exec rattler-index fs crates/shelf-worker/public/channel
+      - name: Commit channel update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add crates/shelf-worker/public/channel
+          git commit -m "CI: update conda channel (${GITHUB_REF_NAME})" || echo "channel unchanged"
+          git push origin main
+      - name: Deploy Worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        if: ${{ env.CLOUDFLARE_API_TOKEN != '' }}
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo install -q worker-build
+          cd crates/shelf-worker && npx wrangler deploy
