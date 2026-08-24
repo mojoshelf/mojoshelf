@@ -219,10 +219,14 @@ pub fn tin(d: &shelf_core::TinDetail) -> String {
     let install = match d.versions.first() {
         Some(latest) => format!(
             r#"<h2>Install <span class="pick-one">— pick one</span></h2>
+<p class="install-label">the <code>pixi shelf</code> and <code>shelf</code> options need the
+shelf extension installed once:
+<code>pixi global install --channel https://mojoshelf.org/channel mojoshelf</code></p>
 <p class="install-label">pixi mode: a registry-pinned git source dependency</p>
 <pre><code>pixi shelf add {name}</code></pre>
-<p class="install-label">the same, with plain pixi (no shelf CLI needed)</p>
-<pre><code>pixi add --git {url} --rev {sha} {name}</code></pre>
+<p class="install-label">the same, with plain pixi (no shelf extension needed)</p>
+<pre><code>pixi add --git {url} \
+    --rev {sha} {name}</code></pre>
 <p class="install-label">submodule mode: pinned source under <code>shelf/{name}</code></p>
 <pre><code>shelf add {name}</code></pre>"#,
             name = esc(&d.name),
