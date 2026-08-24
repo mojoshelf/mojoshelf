@@ -2,9 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
-/// A book as listed by `GET /api/books`.
+/// A tin as listed by `GET /api/tins`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BookSummary {
+pub struct TinSummary {
     pub name: String,
     pub url: String,
     pub description: Option<String>,
@@ -14,7 +14,7 @@ pub struct BookSummary {
     pub latest_version: Option<String>,
 }
 
-/// One published version of a book.
+/// One published version of a tin.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VersionInfo {
     pub version: String,
@@ -23,9 +23,9 @@ pub struct VersionInfo {
     pub dependencies: Vec<String>,
 }
 
-/// A book with its full version history, from `GET /api/books/:name`.
+/// A tin with its full version history, from `GET /api/tins/:name`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BookDetail {
+pub struct TinDetail {
     pub name: String,
     pub url: String,
     pub description: Option<String>,
@@ -34,14 +34,14 @@ pub struct BookDetail {
     pub tags: Vec<String>,
     /// Newest first.
     pub versions: Vec<VersionInfo>,
-    /// Names of other books with a published version depending on this one.
+    /// Names of other tins with a published version depending on this one.
     #[serde(default)]
     pub dependents: Vec<String>,
 }
 
-/// One entry of the flat install set from `GET /api/books/:name/resolve`.
+/// One entry of the flat install set from `GET /api/tins/:name/resolve`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResolvedBook {
+pub struct ResolvedTin {
     pub name: String,
     pub url: String,
     pub version: String,
@@ -49,7 +49,7 @@ pub struct ResolvedBook {
 }
 
 /// Body of `POST /api/publish`. The first publish of a new name registers
-/// the book, owned by the publishing author; `url` comes from the book
+/// the tin, owned by the publishing author; `url` comes from the tin
 /// repo's origin remote.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PublishRequest {
@@ -70,7 +70,7 @@ pub struct ApiError {
     pub error: String,
 }
 
-/// A book's `shelf.toml`.
+/// A tin's `shelf.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {
     pub name: String,
@@ -79,8 +79,10 @@ pub struct Manifest {
     pub description: Option<String>,
     #[serde(default)]
     pub tags: Vec<String>,
-    #[serde(default)]
-    pub books: Vec<String>,
+    /// Dependencies. `books` is accepted as a legacy alias — manifests
+    /// published before the book→tin rename keep working.
+    #[serde(default, alias = "books")]
+    pub tins: Vec<String>,
 }
 
 /// Picks the highest semver from an iterator of version strings.

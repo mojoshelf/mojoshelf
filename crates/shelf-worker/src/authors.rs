@@ -1,5 +1,5 @@
 //! GitHub sign-in and the author dashboard (publish tokens, deleting
-//! versions/books).
+//! versions/tins).
 
 use crate::{auth, db, error_json, html};
 use serde::Deserialize;
@@ -140,25 +140,25 @@ pub async fn page(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     match current_author(&req, &ctx).await? {
         None => Response::from_html(html::authors_signed_out()),
         Some(author) => {
-            let books = author_books_with_versions(&d1, author.id).await?;
+            let tins = author_tins_with_versions(&d1, author.id).await?;
             Response::from_html(html::authors_dashboard(
                 &author.github_login,
                 author.token_hash.is_some(),
-                &books,
+                &tins,
                 None,
             ))
         }
     }
 }
 
-async fn author_books_with_versions(
+async fn author_tins_with_versions(
     d1: &D1Database,
     author_id: i64,
-) -> Result<Vec<(db::BookRow, Vec<db::VersionRow>)>> {
+) -> Result<Vec<(db::TinRow, Vec<db::VersionRow>)>> {
     let mut out = Vec::new();
-    for book in db::books_of_author(d1, author_id).await? {
-        let versions = db::versions_of(d1, book.id).await?;
-        out.push((book, versions));
+    for tin in db::tins_of_author(d1, author_id).await? {
+        let versions = db::versions_of(d1, tin.id).await?;
+        out.push((tin, versions));
     }
     Ok(out)
 }
@@ -171,74 +171,74 @@ pub async fn generate_token(req: Request, ctx: RouteContext<()>) -> Result<Respo
     let d1 = ctx.env.d1("DB")?;
     let token = format!("shelf_{}", auth::random_hex(24)?);
     db::set_token_hash(&d1, author.id, &auth::sha256_hex(&token)).await?;
-    let books = author_books_with_versions(&d1, author.id).await?;
+    let tins = author_tins_with_versions(&d1, author.id).await?;
     Response::from_html(html::authors_dashboard(
         &author.github_login,
         true,
-        &books,
+        &tins,
         Some(&token),
     ))
 }
 
-async fn owned_book(
+async fn owned_tin(
     req: &Request,
     ctx: &RouteContext<()>,
-) -> Result<std::result::Result<(db::AuthorRow, db::BookRow), Response>> {
+) -> Result<std::result::Result<(db::AuthorRow, db::TinRow), Response>> {
     let Some(author) = current_author(req, ctx).await? else {
         return Ok(Err(error_json("sign in first", 401)?));
     };
     let name = ctx.param("name").expect("route param");
-    let Some(book) = db::book_by_name(&ctx.env.d1("DB")?, name).await? else {
-        return Ok(Err(error_json("book not found", 404)?));
+    let Some(tin) = db::tin_by_name(&ctx.env.d1("DB")?, name).await? else {
+        return Ok(Err(error_json("tin not found", 404)?));
     };
-    if book.author_id != Some(author.id) {
-        return Ok(Err(error_json("you do not own this book", 403)?));
+    if tin.author_id != Some(author.id) {
+        return Ok(Err(error_json("you do not own this tin", 403)?));
     }
-    Ok(Ok((author, book)))
+    Ok(Ok((author, tin)))
 }
 
-/// Public page listing all books published by one author.
+/// Public page listing all tins published by one author.
 pub async fn author_page(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let login = ctx.param("login").expect("route param");
     let d1 = ctx.env.d1("DB")?;
     if db::author_by_login(&d1, login).await?.is_none() {
         return Response::error("author not found", 404);
     }
-    let books: Vec<_> = db::list_books(&d1, "")
+    let tins: Vec<_> = db::list_tins(&d1, "")
         .await?
         .into_iter()
         .filter(|b| b.author.as_deref() == Some(login.as_str()))
         .collect();
-    Response::from_html(html::author(login, &books))
+    Response::from_html(html::author(login, &tins))
 }
 
-pub async fn delete_book(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let (_, book) = match owned_book(&req, &ctx).await? {
+pub async fn delete_tin(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let (_, tin) = match owned_tin(&req, &ctx).await? {
         Ok(v) => v,
         Err(resp) => return Ok(resp),
     };
     let d1 = ctx.env.d1("DB")?;
-    if db::dependent_count(&d1, book.id).await? > 0 {
-        return error_json("other books depend on this book; it cannot be deleted", 409);
+    if db::dependent_count(&d1, tin.id).await? > 0 {
+        return error_json("other tins depend on this tin; it cannot be deleted", 409);
     }
-    db::delete_book(&d1, book.id).await?;
+    db::delete_tin(&d1, tin.id).await?;
     see_other("/authors", &[])
 }
 
 pub async fn delete_version(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let (_, book) = match owned_book(&req, &ctx).await? {
+    let (_, tin) = match owned_tin(&req, &ctx).await? {
         Ok(v) => v,
         Err(resp) => return Ok(resp),
     };
     let version = ctx.param("version").expect("route param");
     let d1 = ctx.env.d1("DB")?;
-    let versions = db::versions_of(&d1, book.id).await?;
+    let versions = db::versions_of(&d1, tin.id).await?;
     let Some(row) = versions.iter().find(|v| &v.version == version) else {
         return error_json("version not found", 404);
     };
-    if versions.len() == 1 && db::dependent_count(&d1, book.id).await? > 0 {
+    if versions.len() == 1 && db::dependent_count(&d1, tin.id).await? > 0 {
         return error_json(
-            "this is the last published version and other books depend on this book",
+            "this is the last published version and other tins depend on this tin",
             409,
         );
     }

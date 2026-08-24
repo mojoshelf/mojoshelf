@@ -5,18 +5,18 @@ mod registry;
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, Subcommand};
 use registry::Registry;
-use shelf_core::{Manifest, PublishRequest, ResolvedBook};
+use shelf_core::{Manifest, PublishRequest, ResolvedTin};
 use std::path::Path;
 
 #[derive(Parser)]
 #[command(
     name = "shelf",
     version,
-    about = "mojoshelf: a registry of Mojo books",
-    long_about = "mojoshelf: a registry of Mojo books.\n\n\
+    about = "mojoshelf: a registry of Mojo tins",
+    long_about = "mojoshelf: a registry of Mojo tins.\n\n\
         Two install modes:\n  \
-        - submodule mode (default as `shelf`): books become git submodules under shelf/<name>\n  \
-        - pixi mode (default as `pixi shelf`, or --pixi): books become registry-pinned\n    \
+        - submodule mode (default as `shelf`): tins become git submodules under shelf/<name>\n  \
+        - pixi mode (default as `pixi shelf`, or --pixi): tins become registry-pinned\n    \
         git source dependencies via `pixi add --git`, built by pixi-build-mojo"
 )]
 struct Cli {
@@ -33,23 +33,23 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Add a book (and its dependencies) as submodules under shelf/.
+    /// Add a tin (and its dependencies) as submodules under shelf/.
     Add {
-        /// Book name, optionally with a version: name[@version].
+        /// Tin name, optionally with a version: name[@version].
         spec: String,
         /// Print the install set without touching git.
         #[arg(long)]
         dry_run: bool,
     },
-    /// Remove a book's submodule.
+    /// Remove a tin's submodule.
     Remove { name: String },
-    /// Re-pin a book (or all installed books) to its latest published version.
+    /// Re-pin a tin (or all installed tins) to its latest published version.
     Update { name: Option<String> },
-    /// List installed books with their pinned versions.
+    /// List installed tins with their pinned versions.
     List,
-    /// Search registry book names and descriptions.
+    /// Search registry tin names and descriptions.
     Search { term: Option<String> },
-    /// Show a book's description, URL, versions, and dependencies.
+    /// Show a tin's description, URL, versions, and dependencies.
     Info { name: String },
     /// Publish the version in ./shelf.toml to the registry.
     Publish,
@@ -92,6 +92,21 @@ fn main() {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use shelf_core::Manifest;
+
+    #[test]
+    fn manifest_accepts_legacy_books_alias() {
+        let m: Manifest =
+            toml::from_str("name = \"a\"\nversion = \"1.0.0\"\nbooks = [\"zlib-mojo\"]").unwrap();
+        assert_eq!(m.tins, vec!["zlib-mojo"]);
+        let m2: Manifest =
+            toml::from_str("name = \"a\"\nversion = \"1.0.0\"\ntins = [\"csv\"]").unwrap();
+        assert_eq!(m2.tins, vec!["csv"]);
+    }
+}
+
 /// Converts an ssh-style remote (git@host:owner/repo) to https so that
 /// consumers without ssh access can clone the submodule.
 fn https_url(origin: &str) -> String {
@@ -108,16 +123,16 @@ fn split_spec(spec: &str) -> (&str, Option<&str>) {
     }
 }
 
-fn install_set(reg: &Registry, name: &str, version: Option<&str>) -> Result<Vec<ResolvedBook>> {
+fn install_set(reg: &Registry, name: &str, version: Option<&str>) -> Result<Vec<ResolvedTin>> {
     reg.resolve(name, version)
         .with_context(|| format!("could not resolve '{name}'"))
 }
 
-fn install(root: &Path, book: &ResolvedBook) -> Result<()> {
-    let path = format!("shelf/{}", book.name);
-    git::add_submodule(root, &book.url, &path)?;
-    git::pin_submodule(root, &path, &book.commit_sha)?;
-    println!("added {} {} ({})", book.name, book.version, &book.commit_sha[..12]);
+fn install(root: &Path, tin: &ResolvedTin) -> Result<()> {
+    let path = format!("shelf/{}", tin.name);
+    git::add_submodule(root, &tin.url, &path)?;
+    git::pin_submodule(root, &path, &tin.commit_sha)?;
+    println!("added {} {} ({})", tin.name, tin.version, &tin.commit_sha[..12]);
     Ok(())
 }
 
@@ -132,16 +147,16 @@ fn add(reg: &Registry, spec: &str, dry_run: bool) -> Result<()> {
         return Ok(());
     }
     let root = git::repo_root()?;
-    let installed: Vec<String> = git::installed_books(&root)?
+    let installed: Vec<String> = git::installed_tins(&root)?
         .into_iter()
         .map(|(n, _)| n)
         .collect();
-    for book in &set {
-        if installed.contains(&book.name) {
-            println!("skipping {} (already installed)", book.name);
+    for tin in &set {
+        if installed.contains(&tin.name) {
+            println!("skipping {} (already installed)", tin.name);
             continue;
         }
-        install(&root, book)?;
+        install(&root, tin)?;
     }
     println!("done; commit the submodule changes when ready");
     Ok(())
@@ -149,11 +164,11 @@ fn add(reg: &Registry, spec: &str, dry_run: bool) -> Result<()> {
 
 fn remove(reg: &Registry, name: &str) -> Result<()> {
     let root = git::repo_root()?;
-    let installed = git::installed_books(&root)?;
+    let installed = git::installed_tins(&root)?;
     if !installed.iter().any(|(n, _)| n == name) {
         bail!("'{name}' is not installed under shelf/");
     }
-    // Warn if any other installed book's pinned version depends on it.
+    // Warn if any other installed tin's pinned version depends on it.
     for (other, sha) in installed.iter().filter(|(n, _)| n != name) {
         if let Ok(detail) = reg.info(other) {
             let depends = detail
@@ -163,7 +178,7 @@ fn remove(reg: &Registry, name: &str) -> Result<()> {
                 .map(|v| v.dependencies.iter().any(|d| d == name))
                 .unwrap_or(false);
             if depends {
-                println!("warning: installed book '{other}' depends on '{name}'");
+                println!("warning: installed tin '{other}' depends on '{name}'");
             }
         }
     }
@@ -174,7 +189,7 @@ fn remove(reg: &Registry, name: &str) -> Result<()> {
 
 fn update(reg: &Registry, name: Option<&str>) -> Result<()> {
     let root = git::repo_root()?;
-    let installed = git::installed_books(&root)?;
+    let installed = git::installed_tins(&root)?;
     if installed.is_empty() {
         bail!("nothing installed under shelf/");
     }
@@ -188,8 +203,8 @@ fn update(reg: &Registry, name: Option<&str>) -> Result<()> {
         }
         None => installed.iter().collect(),
     };
-    for (book_name, _) in targets {
-        for resolved in install_set(reg, book_name, None)? {
+    for (tin_name, _) in targets {
+        for resolved in install_set(reg, tin_name, None)? {
             let path = format!("shelf/{}", resolved.name);
             match installed.iter().find(|(n, _)| *n == resolved.name) {
                 None => install(&root, &resolved)?,
@@ -212,7 +227,7 @@ fn update(reg: &Registry, name: Option<&str>) -> Result<()> {
 
 fn list(reg: &Registry) -> Result<()> {
     let root = git::repo_root()?;
-    let installed = git::installed_books(&root)?;
+    let installed = git::installed_tins(&root)?;
     if installed.is_empty() {
         println!("nothing installed under shelf/");
         return Ok(());
@@ -235,12 +250,12 @@ fn list(reg: &Registry) -> Result<()> {
 }
 
 fn search(reg: &Registry, term: &str) -> Result<()> {
-    let books = reg.search(term)?;
-    if books.is_empty() {
-        println!("no books found");
+    let tins = reg.search(term)?;
+    if tins.is_empty() {
+        println!("no tins found");
         return Ok(());
     }
-    for b in books {
+    for b in tins {
         println!(
             "{} {} — {}",
             b.name,
@@ -286,8 +301,8 @@ fn info(reg: &Registry, name: &str) -> Result<()> {
     Ok(())
 }
 
-/// A book is pixi-consumable when its pixi.toml declares a [package] built
-/// by pixi-build-mojo. Warn (not fail) otherwise: FFI books legitimately
+/// A tin is pixi-consumable when its pixi.toml declares a [package] built
+/// by pixi-build-mojo. Warn (not fail) otherwise: FFI tins legitimately
 /// stay submodule-only until the backend supports their build steps.
 fn warn_if_not_pixi_consumable(manifest: &Manifest) {
     let ok = std::fs::read_to_string("pixi.toml")
@@ -335,7 +350,7 @@ Then verify with `pixi build` before publishing."
 fn publish(reg: &Registry) -> Result<()> {
     let manifest_path = Path::new("shelf.toml");
     let raw = std::fs::read_to_string(manifest_path)
-        .context("no shelf.toml here; run publish from the book's repo root")?;
+        .context("no shelf.toml here; run publish from the tin's repo root")?;
     let manifest: Manifest = toml::from_str(&raw).context("could not parse shelf.toml")?;
     semver::Version::parse(&manifest.version)
         .with_context(|| format!("'{}' in shelf.toml is not valid semver", manifest.version))?;
@@ -358,7 +373,7 @@ fn publish(reg: &Registry) -> Result<()> {
         url: https_url(&origin),
         description: manifest.description.clone(),
         tags: manifest.tags.clone(),
-        dependencies: manifest.books,
+        dependencies: manifest.tins,
     })?;
     println!(
         "published {} {} ({})",

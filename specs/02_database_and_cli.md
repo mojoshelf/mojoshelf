@@ -2,7 +2,7 @@
 
 ## Database (D1)
 
-### books
+### tins
 
 | field       | type    | notes                             |
 | ----------- | ------- | --------------------------------- |
@@ -27,18 +27,18 @@
 
 Authors sign in with GitHub OAuth on the website's Authors tab, where they
 generate a publish token (shown once, stored hashed) and can delete versions
-of their books or a whole book. Deleting is refused while another book's
-published version depends on the book. Search matches name, description, and
-tags. Each book has a public page with its versions, dependencies, and
-dependents; each author has a public page listing their books.
+of their tins or a whole tin. Deleting is refused while another tin's
+published version depends on the tin. Search matches name, description, and
+tags. Each tin has a public page with its versions, dependencies, and
+dependents; each author has a public page listing their tins.
 
 ### versions
 
 | field        | type    | notes                      |
 | ------------ | ------- | -------------------------- |
 | id           | INTEGER | primary key                |
-| book_id      | INTEGER | FK -> books                |
-| version      | TEXT    | semver; unique per book    |
+| tin_id      | INTEGER | FK -> tins                |
+| version      | TEXT    | semver; unique per tin    |
 | commit_sha   | TEXT    | full 40-char sha, not null |
 | published_at | TEXT    | ISO 8601                   |
 
@@ -47,27 +47,27 @@ dependents; each author has a public page listing their books.
 | field              | type    | notes          |
 | ------------------ | ------- | -------------- |
 | version_id         | INTEGER | FK -> versions |
-| depends_on_book_id | INTEGER | FK -> books    |
+| depends_on_tin_id | INTEGER | FK -> tins    |
 
-Primary key: (version_id, depends_on_book_id). Snapshotted from `shelf.toml`
+Primary key: (version_id, depends_on_tin_id). Snapshotted from `shelf.toml`
 at publish time. Publishing fails if a dependency name is not a registered
-book. Dependencies are by name only; resolution always picks the dependency's
+tin. Dependencies are by name only; resolution always picks the dependency's
 latest published version.
 
 ## shelf.toml
 
-Lives at the book's repo root:
+Lives at the tin's repo root:
 
 ```toml
 name = "lightbug_http"
 version = "0.2.0"
 description = "HTTP framework for Mojo"
 tags = ["http", "networking"]
-books = ["small_time"]
+tins = ["small_time"]
 ```
 
 `name` and `version` are required; the rest are optional. Authors bump
-`version` and commit before publishing. The registry takes the book's
+`version` and commit before publishing. The registry takes the tin's
 description and tags from `shelf.toml` on every publish.
 
 ## CLI
@@ -79,42 +79,42 @@ The binary is `shelf`. Global options:
 
 ### shelf add <name>[@<version>]
 
-Resolves the book (latest version unless `@<version>` is given) and its full
+Resolves the tin (latest version unless `@<version>` is given) and its full
 transitive dependency set from the registry, then adds each as a flat
-submodule under `shelf/<name>` pinned to its published commit. Books already
+submodule under `shelf/<name>` pinned to its published commit. Tins already
 present are skipped.
 
 - `--dry-run` — print the install set without touching git.
 
 ### shelf remove <name>
 
-Removes the book's submodule. Warns if another installed book depends on it.
+Removes the tin's submodule. Warns if another installed tin depends on it.
 
 ### shelf update [<name>]
 
-Re-pins the named book (or all installed books) to its latest published
+Re-pins the named tin (or all installed tins) to its latest published
 version, adding any new transitive dependencies.
 
 ### shelf list
 
-Lists installed books with their pinned versions.
+Lists installed tins with their pinned versions.
 
 ### shelf search [term]
 
-Searches registry book names and descriptions. No term lists all books.
+Searches registry tin names and descriptions. No term lists all tins.
 
 ### shelf info <name>
 
-Shows a book's description, URL, versions, and dependencies.
+Shows a tin's description, URL, versions, and dependencies.
 
 ### shelf publish
 
-Run from a book's repo root. Reads `name`, `version`, and dependencies from
+Run from a tin's repo root. Reads `name`, `version`, and dependencies from
 `shelf.toml`, takes the current HEAD commit and the `origin` remote URL
 (ssh remotes are converted to https), then registers
 `(name, version, commit, url, dependencies)` with the registry. The first
-publish of a new name registers the book, owned by the publishing author;
+publish of a new name registers the tin, owned by the publishing author;
 later publishes require the same owner. Fails if the working tree is dirty,
-if HEAD is not pushed, or if the version already exists for the book.
+if HEAD is not pushed, or if the version already exists for the tin.
 Authenticates with the author's publish token (`SHELF_TOKEN`), obtained on
 the website's Authors tab after GitHub sign-in.

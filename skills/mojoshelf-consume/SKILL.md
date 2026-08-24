@@ -1,16 +1,16 @@
 ---
 name: mojoshelf-consume
-description: Install and use reusable Mojo libraries ("books") from the mojoshelf registry (mojoshelf.org) as pinned git submodules. Use when a Mojo project needs a third-party library, when the user mentions mojoshelf or `shelf add`, or when building/running code that imports an installed book.
+description: Install and use reusable Mojo libraries ("tins") from the mojoshelf registry (mojoshelf.org) as pinned git submodules. Use when a Mojo project needs a third-party library, when the user mentions mojoshelf or `shelf add`, or when building/running code that imports an installed tin.
 license: MIT
 compatibility: Requires git and the shelf CLI (Rust); pixi recommended for the Mojo toolchain
 metadata:
   author: mojoshelf
 ---
 
-# Consume a book from mojoshelf
+# Consume a tin from mojoshelf
 
 mojoshelf (https://mojoshelf.org) is a registry of reusable Mojo libraries,
-called **books**. Books install as flat git submodules under `shelf/<name>`,
+called **tins**. Tins install as flat git submodules under `shelf/<name>`,
 pinned to the commit of a published version.
 
 ## Install the CLI (once)
@@ -28,17 +28,17 @@ latter automatically, so `pixi shelf <command>` works out of the box.
 
 ## Two install modes
 
-**Pixi mode** (`pixi shelf add <name>`, or `shelf add --pixi <name>`): books
+**Pixi mode** (`pixi shelf add <name>`, or `shelf add --pixi <name>`): tins
 become registry-pinned git source dependencies in pixi.toml, added flat via
 `pixi add --git <url> --rev <commit>` and built by the pixi-build-mojo
 backend. Requires `preview = ["pixi-build"]` in the consumer's `[workspace]`
-section (the CLI tells you if it is missing) and requires the book to be a
-pixi package (a `[package]` section in its pixi.toml). If a book does not
+section (the CLI tells you if it is missing) and requires the tin to be a
+pixi package (a `[package]` section in its pixi.toml). If a tin does not
 support this yet, fall back to submodule mode.
 
-**Submodule mode** (`shelf add <name>`): works for every book; details below.
+**Submodule mode** (`shelf add <name>`): works for every tin; details below.
 
-## Find and install a book
+## Find and install a tin
 
 Run from the consuming project's repo root (must be a git repository):
 
@@ -50,13 +50,13 @@ shelf add <name> --dry-run  # preview the install set without touching git
 ```
 
 `shelf add` resolves the full transitive dependency set in one registry call
-and adds every book — direct and transitive — as a submodule under
+and adds every tin — direct and transitive — as a submodule under
 `shelf/<name>`, pinned to its published commit. Submodules are never nested.
 Commit the resulting `.gitmodules` and submodule changes.
 
-## Build against installed books
+## Build against installed tins
 
-Point the Mojo compiler at each book's `src` with `-I`. With pixi, wrap it
+Point the Mojo compiler at each tin's `src` with `-I`. With pixi, wrap it
 as a task in `pixi.toml`:
 
 ```toml
@@ -73,10 +73,10 @@ A complete working example: https://github.com/mojoshelf/example
 ## Maintain
 
 ```sh
-shelf list                # installed books with pinned versions
+shelf list                # installed tins with pinned versions
 shelf update [<name>]     # re-pin to latest published versions
-shelf remove <name>       # remove a book's submodule
+shelf remove <name>       # remove a tin's submodule
 ```
 
-When cloning a repo that consumes books, use
+When cloning a repo that consumes tins, use
 `git clone --recurse-submodules` (or `git submodule update --init`).

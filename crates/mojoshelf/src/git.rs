@@ -29,7 +29,7 @@ pub fn repo_root() -> Result<PathBuf> {
 }
 
 /// Submodule paths under shelf/ with their pinned commits, from `.gitmodules`.
-pub fn installed_books(root: &Path) -> Result<Vec<(String, String)>> {
+pub fn installed_tins(root: &Path) -> Result<Vec<(String, String)>> {
     if !root.join(".gitmodules").exists() {
         return Ok(vec![]);
     }
@@ -44,7 +44,7 @@ pub fn installed_books(root: &Path) -> Result<Vec<(String, String)>> {
         ],
     )
     .unwrap_or_default();
-    let mut books = Vec::new();
+    let mut tins = Vec::new();
     for line in paths.lines() {
         let Some(path) = line.split_whitespace().nth(1) else {
             continue;
@@ -59,9 +59,9 @@ pub fn installed_books(root: &Path) -> Result<Vec<(String, String)>> {
             .next()
             .unwrap_or_default()
             .to_string();
-        books.push((name.to_string(), sha));
+        tins.push((name.to_string(), sha));
     }
-    Ok(books)
+    Ok(tins)
 }
 
 /// Checks out `commit` inside the submodule at `path` and stages the pin.

@@ -18,7 +18,7 @@ The conda package is built for osx-arm64; new CLI versions are released with
 ## Agent skills
 
 Two [Agent Skills](https://agentskills.io) ship with this repo — one for
-consuming books, one for publishing them:
+consuming tins, one for publishing them:
 
 ```sh
 npx skills add mojoshelf/mojoshelf                                  # pick interactively

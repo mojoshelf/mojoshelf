@@ -1,6 +1,6 @@
-//! Pixi mode: install books as registry-pinned git source dependencies,
+//! Pixi mode: install tins as registry-pinned git source dependencies,
 //! delegating the pixi.toml ceremony to `pixi add --git`. The dependency set
-//! is flattened: every book in the transitive resolve set becomes a
+//! is flattened: every tin in the transitive resolve set becomes a
 //! top-level entry pinned by the registry, mirroring submodule mode.
 
 use crate::registry::Registry;
@@ -78,7 +78,7 @@ pub fn update(reg: &Registry, name: Option<&str>) -> Result<()> {
     // Re-resolving and re-adding moves the pinned revs; `pixi add` replaces
     // the existing entries.
     let Some(name) = name else {
-        bail!("pixi mode updates one book at a time: shelf update <name>");
+        bail!("pixi mode updates one tin at a time: shelf update <name>");
     };
     add(reg, name, false)
 }

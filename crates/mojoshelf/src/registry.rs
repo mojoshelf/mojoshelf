@@ -2,7 +2,7 @@
 
 use anyhow::{anyhow, bail, Result};
 use serde::de::DeserializeOwned;
-use shelf_core::{ApiError, BookDetail, BookSummary, PublishRequest, ResolvedBook};
+use shelf_core::{ApiError, TinDetail, TinSummary, PublishRequest, ResolvedTin};
 
 pub struct Registry {
     base: String,
@@ -51,18 +51,18 @@ impl Registry {
             .map_err(|e| anyhow!("could not parse registry response: {e}"))
     }
 
-    pub fn search(&self, term: &str) -> Result<Vec<BookSummary>> {
-        let url = format!("{}/api/books?q={}", self.base, urlencode(term));
+    pub fn search(&self, term: &str) -> Result<Vec<TinSummary>> {
+        let url = format!("{}/api/tins?q={}", self.base, urlencode(term));
         Self::parse(self.agent.get(&url).call()?)
     }
 
-    pub fn info(&self, name: &str) -> Result<BookDetail> {
-        let url = format!("{}/api/books/{}", self.base, urlencode(name));
+    pub fn info(&self, name: &str) -> Result<TinDetail> {
+        let url = format!("{}/api/tins/{}", self.base, urlencode(name));
         Self::parse(self.agent.get(&url).call()?)
     }
 
-    pub fn resolve(&self, name: &str, version: Option<&str>) -> Result<Vec<ResolvedBook>> {
-        let mut url = format!("{}/api/books/{}/resolve", self.base, urlencode(name));
+    pub fn resolve(&self, name: &str, version: Option<&str>) -> Result<Vec<ResolvedTin>> {
+        let mut url = format!("{}/api/tins/{}/resolve", self.base, urlencode(name));
         if let Some(v) = version {
             url.push_str(&format!("?version={}", urlencode(v)));
         }
