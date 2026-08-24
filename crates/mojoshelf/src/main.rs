@@ -1,4 +1,5 @@
 mod git;
+mod pixi;
 mod registry;
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -8,11 +9,24 @@ use shelf_core::{Manifest, PublishRequest, ResolvedBook};
 use std::path::Path;
 
 #[derive(Parser)]
-#[command(name = "shelf", version, about = "mojoshelf: a git-submodule-based registry of Mojo books")]
+#[command(
+    name = "shelf",
+    version,
+    about = "mojoshelf: a registry of Mojo books",
+    long_about = "mojoshelf: a registry of Mojo books.\n\n\
+        Two install modes:\n  \
+        - submodule mode (default as `shelf`): books become git submodules under shelf/<name>\n  \
+        - pixi mode (default as `pixi shelf`, or --pixi): books become registry-pinned\n    \
+        git source dependencies via `pixi add --git`, built by pixi-build-mojo"
+)]
 struct Cli {
     /// Registry base URL.
     #[arg(long, global = true, env = "SHELF_REGISTRY", default_value = "https://mojoshelf.org")]
     registry: String,
+    /// Install via pixi git source dependencies instead of git submodules
+    /// (the default when invoked as `pixi shelf`).
+    #[arg(long, global = true)]
+    pixi: bool,
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -41,13 +55,32 @@ enum Cmd {
     Publish,
 }
 
+/// True when running as the pixi extension (`pixi shelf …` dispatches to a
+/// binary named pixi-shelf).
+fn invoked_as_pixi_extension() -> bool {
+    std::env::args()
+        .next()
+        .map(|argv0| {
+            Path::new(&argv0)
+                .file_stem()
+                .map(|s| s.to_string_lossy().starts_with("pixi-"))
+                .unwrap_or(false)
+        })
+        .unwrap_or(false)
+}
+
 fn main() {
     let cli = Cli::parse();
     let reg = Registry::new(&cli.registry);
+    let pixi_mode = cli.pixi || invoked_as_pixi_extension();
     let result = match cli.cmd {
+        Cmd::Add { spec, dry_run } if pixi_mode => pixi::add(&reg, &spec, dry_run),
         Cmd::Add { spec, dry_run } => add(&reg, &spec, dry_run),
+        Cmd::Remove { name } if pixi_mode => pixi::remove(&name),
         Cmd::Remove { name } => remove(&reg, &name),
+        Cmd::Update { name } if pixi_mode => pixi::update(&reg, name.as_deref()),
         Cmd::Update { name } => update(&reg, name.as_deref()),
+        Cmd::List if pixi_mode => pixi::list(),
         Cmd::List => list(&reg),
         Cmd::Search { term } => search(&reg, term.as_deref().unwrap_or("")),
         Cmd::Info { name } => info(&reg, &name),
@@ -271,6 +304,14 @@ fn publish(reg: &Registry) -> Result<()> {
     let commit_sha = git::head_commit(&cwd)?;
     let origin = git::git(&cwd, &["remote", "get-url", "origin"])
         .context("no 'origin' remote; publishing needs a public repo URL")?;
+    match std::fs::read_to_string("pixi.toml") {
+        Ok(text) if text.contains("[package]") => {}
+        _ => eprintln!(
+            "warning: no [package] section in pixi.toml — the book will be \
+             installable as a git submodule but not as a pixi source dependency \
+             (pixi-build-mojo backend)"
+        ),
+    }
     reg.publish(&PublishRequest {
         name: manifest.name.clone(),
         version: manifest.version.clone(),

@@ -21,21 +21,6 @@ cargo install --locked --git https://github.com/mojoshelf/mojoshelf mojoshelf
 
 This installs a binary named `shelf`.
 
-This installs binaries named `shelf` and `pixi-shelf`; pixi discovers the
-latter automatically, so `pixi shelf <command>` works out of the box.
-
-## Two install modes
-
-**Pixi mode** (`pixi shelf add <name>`, or `shelf add --pixi <name>`): books
-become registry-pinned git source dependencies in pixi.toml, added flat via
-`pixi add --git <url> --rev <commit>` and built by the pixi-build-mojo
-backend. Requires `preview = ["pixi-build"]` in the consumer's `[workspace]`
-section (the CLI tells you if it is missing) and requires the book to be a
-pixi package (a `[package]` section in its pixi.toml). If a book does not
-support this yet, fall back to submodule mode.
-
-**Submodule mode** (`shelf add <name>`): works for every book; details below.
-
 ## Find and install a book
 
 Run from the consuming project's repo root (must be a git repository):

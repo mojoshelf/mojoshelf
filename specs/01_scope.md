@@ -47,5 +47,11 @@ cycles terminate via a visited set.
   book, owned by the publisher; owners can delete versions or whole books.
 - A book is: name, git URL, description, plus published versions
   (version, commit, dependencies).
-- The CLI installs books as git submodules under `shelf/<name>`.
-- The CLI binary is named `shelf`; the distributed package is `mojoshelf`.
+- The CLI installs books as git submodules under `shelf/<name>` (submodule
+  mode), or — as `pixi shelf` / with `--pixi` — as registry-pinned git source
+  dependencies written via `pixi add --git`, flattened like submodule mode
+  and built by pixi-build-mojo (requires the pixi-build preview and a
+  `[package]` section in the book).
+- The CLI binary is named `shelf` and also installs as `pixi-shelf`, pixi's
+  extension convention for the `pixi shelf` subcommand; the distributed
+  package is `mojoshelf`.

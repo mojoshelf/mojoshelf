@@ -9,6 +9,12 @@ description = "CLI for mojoshelf, the git-submodule-based Mojo book registry"
 name = "shelf"
 path = "src/main.rs"
 
+# Same CLI, discovered by pixi as the `pixi shelf` subcommand; when invoked
+# under this name it defaults to pixi mode (git source dependencies).
+[[bin]]
+name = "pixi-shelf"
+path = "src/main.rs"
+
 [dependencies]
 shelf-core = { path = "../shelf-core" }
 serde.workspace = true

@@ -189,12 +189,26 @@ pub fn book(d: &shelf_core::BookDetail) -> String {
         .first()
         .map(|v| v.dependencies.clone())
         .unwrap_or_default();
+    let install = match d.versions.first() {
+        Some(latest) => format!(
+            "<pre><code># pixi mode (git source dependency)\n\
+             pixi shelf add {name}\n\
+             # …or with plain pixi:\n\
+             pixi add --git {url} --rev {sha} {name}\n\
+             # submodule mode\n\
+             shelf add {name}</code></pre>",
+            name = esc(&d.name),
+            url = esc(&d.url),
+            sha = esc(&latest.commit_sha),
+        ),
+        None => "<p>No published versions yet.</p>".to_string(),
+    };
     let body = format!(
         r#"<h1><code>{name}</code></h1>
 <p>{desc}</p>
 <p>by {author} — <a href="{url}">{url}</a></p>
 <p>{tags}</p>
-<pre><code>shelf add {name}</code></pre>
+{install}
 <h2>Depends on</h2>
 {depends_on}
 <h2>Depended on by</h2>
@@ -224,28 +238,45 @@ pub fn author(login: &str, books: &[BookSummary]) -> String {
 
 pub fn getting_started() -> String {
     let body = r#"<h1>Getting started</h1>
-<p>Install the <code>shelf</code> CLI:</p>
+<p>Install the CLI — this provides both <code>shelf</code> and the
+<code>pixi shelf</code> extension:</p>
 <pre><code>cargo install --locked --git https://github.com/mojoshelf/mojoshelf mojoshelf</code></pre>
-<p>Then, from your project's repo root, add a book from the
-<a href="/">shelf</a>:</p>
+<p>Books install in one of two modes.</p>
+<h2>Pixi mode: git source dependencies</h2>
+<p>Books become registry-pinned git dependencies in your <code>pixi.toml</code>,
+built by the <code>pixi-build-mojo</code> backend — no submodules, no
+<code>-I</code> flags. Enable pixi's preview feature in your workspace:</p>
+<pre><code>[workspace]
+preview = ["pixi-build"]</code></pre>
+<p>Then, from anywhere in the workspace:</p>
+<pre><code>pixi shelf add &lt;name&gt;      # or: shelf add --pixi &lt;name&gt;</code></pre>
+<p>The book and its dependencies are added flat, each pinned to its published
+commit via <code>pixi add --git … --rev …</code>. Note: pixi-build is a pixi
+preview feature, and the book must be a pixi package (a
+<code>[package]</code> section with the pixi-build-mojo backend) — books on
+the shelf are still adopting this; submodule mode works for every book
+today.</p>
+<h2>Submodule mode</h2>
+<p>From your project's repo root:</p>
 <pre><code>shelf add &lt;name&gt;</code></pre>
-<p>The book and its dependencies land as submodules under <code>shelf/</code>,
-pinned to their published commits. Useful commands:</p>
-<table>
-<tr><td><code>shelf search [term]</code></td><td>search the registry (name, description, tags)</td></tr>
-<tr><td><code>shelf info &lt;name&gt;</code></td><td>show a book's versions and dependencies</td></tr>
-<tr><td><code>shelf list</code></td><td>list installed books with pinned versions</td></tr>
-<tr><td><code>shelf update [&lt;name&gt;]</code></td><td>re-pin to the latest published versions</td></tr>
-<tr><td><code>shelf remove &lt;name&gt;</code></td><td>remove a book's submodule</td></tr>
-</table>
-<h2>Build with pixi</h2>
-<p>Point the Mojo compiler at the installed books with <code>-I</code>, wrapped
-as a pixi task:</p>
+<p>The book and its dependencies land as flat submodules under
+<code>shelf/</code>, pinned to their published commits. Point the Mojo
+compiler at them with <code>-I</code>, wrapped as a pixi task:</p>
 <pre><code>[tasks]
 run = "mojo run -I shelf/csv/src src/main.mojo"</code></pre>
 <p>See <a href="https://github.com/mojoshelf/example">mojoshelf/example</a> for a
 complete working project consuming the <a href="/books/csv">csv</a> book —
 clone it with <code>--recurse-submodules</code> and <code>pixi run run</code>.</p>
+<h2>Useful commands</h2>
+<table>
+<tr><td><code>shelf search [term]</code></td><td>search the registry (name, description, tags)</td></tr>
+<tr><td><code>shelf info &lt;name&gt;</code></td><td>show a book's versions and dependencies</td></tr>
+<tr><td><code>shelf list</code></td><td>list installed books with pinned versions</td></tr>
+<tr><td><code>shelf update [&lt;name&gt;]</code></td><td>re-pin to the latest published versions</td></tr>
+<tr><td><code>shelf remove &lt;name&gt;</code></td><td>remove an installed book</td></tr>
+</table>
+<p>Every command works in both modes; prefix with <code>pixi</code> (or pass
+<code>--pixi</code>) for pixi mode.</p>
 <p>Want to publish your own book? See the <a href="/authors">Authors</a> page.</p>"#;
     page("Mojo Shelf getting started", "Getting started", body)
 }
