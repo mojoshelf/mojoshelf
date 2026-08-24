@@ -101,7 +101,8 @@ pub fn head_commit(dir: &Path) -> Result<String> {
 }
 
 pub fn working_tree_clean(dir: &Path) -> Result<bool> {
-    Ok(git(dir, &["status", "--porcelain"])?.is_empty())
+    // Untracked files don't affect the committed content being pinned.
+    Ok(git(dir, &["status", "--porcelain", "-uno"])?.is_empty())
 }
 
 pub fn head_is_pushed(dir: &Path) -> Result<bool> {
