@@ -117,12 +117,20 @@ fn page(title: &str, active: &str, body: &str) -> String {
   .pick-one {{ font-size: .85rem; font-weight: 400; color: var(--muted); }}
   .install-label {{ margin: .8rem 0 .25rem; font-size: .85rem; color: var(--muted); }}
   .install-label + pre {{ margin-top: 0; }}
+  .top-links {{ display: flex; justify-content: flex-end; gap: 1rem;
+               font-size: .85rem; margin-bottom: .25rem; }}
+  .top-links a {{ color: var(--muted); text-decoration: none; }}
+  .top-links a:hover {{ color: var(--accent); }}
   footer {{ margin-top: 2rem; font-size: .8rem; color: var(--muted); }}
 </style>
 </head>
 <body>
 {nav}
 <main>
+<div class="top-links">
+<a href="https://github.com/mojoshelf/mojoshelf/issues">Issues</a>
+<a href="https://github.com/mojoshelf/mojoshelf/discussions">Discussions</a>
+</div>
 {body}
 <footer>mojoshelf — an experimental registry of reusable Mojo tins, installed as pixi source dependencies or git submodules.</footer>
 </main>
