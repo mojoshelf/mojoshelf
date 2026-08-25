@@ -18,7 +18,8 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .get_async("/", home)
         .get_async("/getting-started", getting_started)
         .get_async("/install-modes", install_modes)
-        .get_async("/build-process", build_process)
+        .get_async("/packaging", packaging)
+        .get_async("/build-process", packaging)
         .get_async("/tins/:name", tin_page)
         .get_async("/api/tins", api_list)
         .get_async("/api/tins/:name", api_tin)
@@ -77,8 +78,8 @@ async fn install_modes(_req: Request, _ctx: RouteContext<()>) -> Result<Response
     Response::from_html(html::install_modes())
 }
 
-async fn build_process(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
-    Response::from_html(html::build_process())
+async fn packaging(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
+    Response::from_html(html::packaging())
 }
 
 async fn tin_page(_req: Request, ctx: RouteContext<()>) -> Result<Response> {

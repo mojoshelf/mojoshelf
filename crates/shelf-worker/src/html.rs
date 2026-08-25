@@ -40,7 +40,7 @@ fn page(title: &str, active: &str, body: &str) -> String {
         item("/authors", "Authors"),
         item("/getting-started", "Getting started"),
         item("/install-modes", "Install modes"),
-        item("/build-process", "Build process"),
+        item("/packaging", "Packaging"),
     );
     format!(
         r#"<!doctype html>
@@ -360,8 +360,8 @@ build script.</li>
     page("Mojo Shelf install modes", "Install modes", body)
 }
 
-pub fn build_process() -> String {
-    let body = r#"<h1>Build process</h1>
+pub fn packaging() -> String {
+    let body = r#"<h1>Packaging</h1>
 <p>In pixi mode a tin is a <strong>source dependency</strong>: pixi fetches the
 tin's repo at its registry-pinned commit and builds it into a conda package in
 your environment. The conda machinery underneath does real work for us:</p>
@@ -397,7 +397,7 @@ pixi-build-mojo), a convention for finding <code>.mojopkg</code>s in
 wheels have no shared native dependency graph, so each shim must bundle its
 dylibs. Conda stays the primary substrate; a wheel experiment would start with
 a Python-interop tin like <code>pontoneer</code>.</p>"#;
-    page("Mojo Shelf build process", "Build process", body)
+    page("Mojo Shelf packaging", "Packaging", body)
 }
 
 pub fn getting_started() -> String {
