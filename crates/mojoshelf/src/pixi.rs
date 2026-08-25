@@ -52,6 +52,10 @@ fn ensure_pixi_build_preview() -> Result<()> {
 }
 
 pub fn add(reg: &Registry, spec: &str, dry_run: bool) -> Result<()> {
+    add_inner(reg, spec, dry_run, false)
+}
+
+fn add_inner(reg: &Registry, spec: &str, dry_run: bool, force: bool) -> Result<()> {
     let (name, version) = crate::split_spec(spec);
     let set = crate::install_set(reg, name, version)?;
     if dry_run {
@@ -63,6 +67,13 @@ pub fn add(reg: &Registry, spec: &str, dry_run: bool) -> Result<()> {
     }
     ensure_pixi_build_preview()?;
     for b in &set {
+        if force {
+            // `pixi add` keeps an existing entry's rev; drop it first so the
+            // new pin actually lands.
+            let _ = std::process::Command::new("pixi")
+                .args(["remove", &b.name])
+                .output();
+        }
         run_pixi(&["add", "--git", &b.url, "--rev", &b.commit_sha, &b.name])?;
         println!(
             "added {} {} ({}) as a pixi git dependency",
@@ -80,7 +91,7 @@ pub fn update(reg: &Registry, name: Option<&str>) -> Result<()> {
     let Some(name) = name else {
         bail!("pixi mode updates one tin at a time: shelf update <name>");
     };
-    add(reg, name, false)
+    add_inner(reg, name, false, true)
 }
 
 pub fn remove(name: &str) -> Result<()> {
