@@ -48,6 +48,10 @@ fn page(title: &str, active: &str, body: &str) -> String {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="mojoshelf — an experimental community registry of reusable Mojo libraries (tins), installed as pixi source dependencies or git submodules. Not affiliated with Modular.">
+<meta property="og:site_name" content="Mojo Shelf">
+<meta property="og:title" content="{title}">
+<meta property="og:description" content="An experimental community registry of reusable Mojo libraries (tins).">
 <title>{title}</title>
 <style>
   :root {{
