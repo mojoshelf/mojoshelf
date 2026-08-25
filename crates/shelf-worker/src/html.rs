@@ -325,6 +325,16 @@ editor: greppable, LSP-navigable, patchable while debugging. With pixi
 dependencies you get a built package in a conda environment instead. This
 trade-off is permanent, not transitional.</li>
 </ul>
+<p><strong>Note — submodule mode means you do the build.</strong> Pixi mode
+compiles tins for you; with submodules you point the Mojo compiler at each
+tin's source yourself (<code>-I shelf/&lt;name&gt;/src</code>), and FFI tins
+additionally need their native shim built and reachable at runtime. The build
+is not a secret: every tin repo carries its own definition — the
+<code>[package]</code> sections in its <code>pixi.toml</code> and, for shims,
+a <code>shim/</code> or <code>ffi/</code> subpackage (CMake or a
+rattler-build recipe). The shortcut: run <code>pixi install</code> inside the
+tin's checkout and it builds everything, including the shim, into that
+environment.</p>
 <h2>Which should I use?</h2>
 <p>Prefer <a href="/getting-started">pixi mode</a> when every tin you need
 supports it; fall back to submodules otherwise. The two modes coexist in one
@@ -361,7 +371,7 @@ build script.</li>
 }
 
 pub fn packaging() -> String {
-    let body = r#"<h1>Packaging</h1>
+    let body = r#"<h1>Packaging: conda vs. wheel</h1>
 <p>In pixi mode a tin is a <strong>source dependency</strong>: pixi fetches the
 tin's repo at its registry-pinned commit and builds it into a conda package in
 your environment. The conda machinery underneath does real work for us:</p>
