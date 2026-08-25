@@ -410,7 +410,10 @@ environment.</p>
 <h2>Which should I use?</h2>
 <p>Prefer <a href="/getting-started">pixi mode</a> when every tin you need
 supports it; fall back to submodules otherwise. The two modes coexist in one
-project. Submodule mode will be retired only when every published tin is
+project. A stable tin can also be <em>graduated</em> — <code>shelf
+graduate</code> turns its pixi-build setup into a binary conda package
+submission for the
+<a href="/community-channel">modular-community channel</a>. Submodule mode will be retired only when every published tin is
 pixi-consumable and pixi-build has stabilized — and with a documented
 migration path (<code>shelf remove</code> each tin, then
 <code>pixi shelf add</code>).</p>
@@ -555,6 +558,10 @@ every tin on the shelf supports it.</p>
 <p>See <a href="https://github.com/mojoshelf/example">mojoshelf/example</a> for a
 complete working project consuming the <a href="/tins/csv">csv</a> tin this
 way — clone it and <code>pixi run run</code>.</p>
+<p>The shelf also mirrors the
+<a href="/community-channel">modular-community channel</a>: its binary
+packages appear in the tin list badged <span class="tag">channel</span>, and
+<code>pixi shelf add</code> installs them the same way.</p>
 <h2>Submodule mode</h2>
 <p>From your project's repo root:</p>
 <pre><code>shelf add &lt;name&gt;</code></pre>
