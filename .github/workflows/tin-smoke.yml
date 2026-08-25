@@ -10,6 +10,11 @@ name: tin-smoke
 # leak.
 on:
   workflow_dispatch:
+    inputs:
+      only:
+        description: "Smoke only this tin (default: all)"
+        required: false
+        default: ""
   schedule:
     - cron: "17 6 * * 1" # weekly, Monday morning
 
@@ -23,10 +28,14 @@ jobs:
     steps:
       - id: list
         run: |
-          # Tins that are not pixi-consumable yet:
-          SKIP='["browser-native"]'
-          TINS=$(curl -sf https://mojoshelf.org/api/tins \
-            | jq -c --argjson skip "$SKIP" '[.[].name | select(. as $n | $skip | index($n) | not)]')
+          if [ -n "${{ inputs.only }}" ]; then
+            TINS='["${{ inputs.only }}"]'
+          else
+            # Tins that are not pixi-consumable yet:
+            SKIP='["browser-native"]'
+            TINS=$(curl -sf https://mojoshelf.org/api/tins \
+              | jq -c --argjson skip "$SKIP" '[.[].name | select(. as $n | $skip | index($n) | not)]')
+          fi
           echo "tins=$TINS" >> "$GITHUB_OUTPUT"
           echo "discovered: $TINS"
 
@@ -58,6 +67,6 @@ jobs:
           esac
           mkdir smoke && cd smoke
           printf '[workspace]\nname = "smoke"\npreview = ["pixi-build"]\nchannels = ["https://conda.modular.com/max-nightly", "conda-forge"]\nplatforms = ["%s"]\n' "$P" > pixi.toml
-          pixi shelf add "${{ matrix.tin }}"
-          pixi install
+          pixi shelf add "${{ matrix.tin }}" || { pixi install -v; exit 1; }
+          pixi install -v
           echo "OK: ${{ matrix.tin }} builds on $P"
