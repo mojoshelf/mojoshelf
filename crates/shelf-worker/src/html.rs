@@ -35,11 +35,12 @@ fn page(title: &str, active: &str, body: &str) -> String {
         format!("<a href=\"{href}\"{class}>{label}</a>")
     };
     let nav = format!(
-        "<aside><div class=\"brand\">🔥 Mojo Shelf</div><nav>{}{}{}{}</nav></aside>",
+        "<aside><div class=\"brand\">🔥 Mojo Shelf</div><nav>{}{}{}{}{}</nav></aside>",
         item("/", "Tins"),
         item("/authors", "Authors"),
         item("/getting-started", "Getting started"),
         item("/install-modes", "Install modes"),
+        item("/build-process", "Build process"),
     );
     format!(
         r#"<!doctype html>
@@ -357,6 +358,46 @@ The shim builds during install and lands in the environment's
 build script.</li>
 </ul>"#;
     page("Mojo Shelf install modes", "Install modes", body)
+}
+
+pub fn build_process() -> String {
+    let body = r#"<h1>Build process</h1>
+<p>In pixi mode a tin is a <strong>source dependency</strong>: pixi fetches the
+tin's repo at its registry-pinned commit and builds it into a conda package in
+your environment. The conda machinery underneath does real work for us:</p>
+<h2>What conda does for tins</h2>
+<ul>
+<li><strong>Builds from source, automatically.</strong> The
+<code>pixi-build-mojo</code> backend compiles the tin's Mojo package
+(<code>.mojopkg</code>) on install; C and Rust FFI shims build as sibling
+packages (cmake or rattler-build recipes) the tin run-depends on.</li>
+<li><strong>Import resolution for free.</strong> Packages land in
+<code>$CONDA_PREFIX/lib/mojo</code>, where the Mojo compiler finds them — no
+<code>-I</code> flags in your build commands.</li>
+<li><strong>A native dependency graph.</strong> Shims link real libraries
+(libz, OpenSSL, …) from conda-forge; conda resolves and installs them into the
+same environment and relocates rpaths so everything loads at runtime.</li>
+<li><strong>Toolchain coherence.</strong> Compiled Mojo packages are tied to a
+compiler version; the solver enforces one <code>mojo-compiler</code> across
+every tin in the environment.</li>
+<li><strong>Transitive builds.</strong> A tin that imports another tin
+(<code>docx</code> → <code>zlib-mojo</code>) declares it as a git-pinned host
+dependency; the dependency is built into the build environment first.</li>
+</ul>
+<p>The same machinery distributes the <code>shelf</code> CLI itself: a conda
+package on the static channel at <code>/channel</code>, installed with
+<code>pixi global install</code>.</p>
+<h2>A pypi/wheel backend?</h2>
+<p>Wheels are a plausible <em>additional</em> distribution for pure-Mojo,
+Python-facing tins: PyPI hosting is universal, <code>uv</code> is fast, plain
+venvs could consume tins, and pixi speaks PyPI natively. What's missing today:
+a PEP 517 build backend for Mojo (the wheel-world equivalent of
+pixi-build-mojo), a convention for finding <code>.mojopkg</code>s in
+<code>site-packages</code>, and per-wheel vendoring of native shim libraries —
+wheels have no shared native dependency graph, so each shim must bundle its
+dylibs. Conda stays the primary substrate; a wheel experiment would start with
+a Python-interop tin like <code>pontoneer</code>.</p>"#;
+    page("Mojo Shelf build process", "Build process", body)
 }
 
 pub fn getting_started() -> String {
