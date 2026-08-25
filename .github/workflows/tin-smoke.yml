@@ -66,7 +66,7 @@ jobs:
             *) P=osx-arm64 ;;
           esac
           mkdir smoke && cd smoke
-          printf '[workspace]\nname = "smoke"\npreview = ["pixi-build"]\nchannels = ["https://conda.modular.com/max-nightly", "conda-forge"]\nplatforms = ["%s"]\n' "$P" > pixi.toml
+          printf '[workspace]\nname = "smoke"\npreview = ["pixi-build"]\nchannels = ["conda-forge", "https://conda.modular.com/max-nightly", "https://repo.prefix.dev/modular-community"]\nplatforms = ["%s"]\n' "$P" > pixi.toml
           # pixi streams rattler build output only to a TTY; `script` fakes one
           # so failures show the actual compiler errors in the CI log.
           if [ "$RUNNER_OS" = "Linux" ]; then

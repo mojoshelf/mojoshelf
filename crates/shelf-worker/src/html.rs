@@ -35,12 +35,13 @@ fn page(title: &str, active: &str, body: &str) -> String {
         format!("<a href=\"{href}\"{class}>{label}</a>")
     };
     let nav = format!(
-        "<aside><div class=\"brand\">🔥 Mojo Shelf</div><nav>{}{}{}{}{}</nav></aside>",
+        "<aside><div class=\"brand\">🔥 Mojo Shelf</div><nav>{}{}{}{}{}{}</nav></aside>",
         item("/", "Tins"),
         item("/authors", "Authors"),
         item("/getting-started", "Getting started"),
         item("/install-modes", "Install modes"),
         item("/packaging", "Packaging"),
+        item("/community-channel", "Community channel"),
     );
     format!(
         r#"<!doctype html>
@@ -422,6 +423,39 @@ a Python-interop tin like <code>pontoneer</code>.</p>"#;
     page("Mojo Shelf packaging", "Packaging", body)
 }
 
+pub fn community_channel() -> String {
+    let body = r#"<h1>The modular-community channel</h1>
+<p><a href="https://repo.prefix.dev/modular-community">modular-community</a>
+is Modular's curated channel of community packages: contributors submit
+rattler-build recipes by PR, CI builds <em>binary</em> conda packages for
+multiple platforms. It is complementary to mojoshelf — curated, binary,
+slower cadence vs. self-serve, source-pinned, instant. The integration
+points:</p>
+<ul>
+<li><strong>Tins can depend on its packages.</strong> Tins build into
+ordinary conda environments, so a tin's host/run dependencies can name any
+modular-community package — just keep the channel in your workspace's
+channel list (our snippets include it).</li>
+<li><strong>One namespace.</strong> Conda names are shared across every
+channel in an environment: when naming a tin, check
+<code>pixi search</code> against conda-forge <em>and</em> modular-community
+(a tin named <code>bridge</code> or <code>crypto</code> would collide
+today).</li>
+<li><strong>The graduation path.</strong> A tin's pixi-build setup is most
+of a modular-community submission — the <code>[package]</code> section maps
+to their recipe, and FFI shim recipes are rattler-build recipes already.
+Iterate source-first on the shelf; when a tin stabilizes, submit it to
+modular-community for curated binary distribution.</li>
+<li><strong>One direction only.</strong> Channel packages cannot depend on
+tins (binary packages cannot reference source dependencies) — the arrow
+points from the shelf toward the channel.</li>
+</ul>
+<p>mojoshelf's role in that picture: the fast-iteration, source-pinning
+layer that feeds the official ecosystem — and retires the day official
+packaging makes it redundant.</p>"#;
+    page("Mojo Shelf community channel", "Community channel", body)
+}
+
 pub fn getting_started() -> String {
     let body = r#"<h1>Getting started</h1>
 <p>Install the CLI — this provides both <code>shelf</code> and the
@@ -434,9 +468,17 @@ package is currently built for osx-arm64.)</p>
 <h2>Pixi mode: git source dependencies</h2>
 <p>Tins become registry-pinned git dependencies in your <code>pixi.toml</code>,
 built by the <code>pixi-build-mojo</code> backend — no submodules, no
-<code>-I</code> flags. Enable pixi's preview feature in your workspace:</p>
+<code>-I</code> flags. Enable pixi's preview feature in your workspace, with
+channels for the Mojo toolchain and the
+<a href="/community-channel">modular-community</a> packages tins may depend
+on:</p>
 <pre><code>[workspace]
-preview = ["pixi-build"]</code></pre>
+preview = ["pixi-build"]
+channels = [
+    "conda-forge",
+    "https://conda.modular.com/max-nightly",
+    "https://repo.prefix.dev/modular-community",
+]</code></pre>
 <p>Then, from anywhere in the workspace:</p>
 <pre><code>pixi shelf add &lt;name&gt;      # or: shelf add --pixi &lt;name&gt;</code></pre>
 <p>The tin and its dependencies are added flat, each pinned to its published

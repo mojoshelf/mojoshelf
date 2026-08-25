@@ -32,7 +32,9 @@ latter automatically, so `pixi shelf <command>` works out of the box.
 **Pixi mode** (`pixi shelf add <name>`, or `shelf add --pixi <name>`): tins
 become registry-pinned git source dependencies in pixi.toml, added flat via
 `pixi add --git <url> --rev <commit>` and built by the pixi-build-mojo
-backend. Requires `preview = ["pixi-build"]` in the consumer's `[workspace]`
+backend. Requires `preview = ["pixi-build"]` and channels including conda-forge,
+Modular's max channel, and https://repo.prefix.dev/modular-community in the
+consumer's `[workspace]`
 section (the CLI tells you if it is missing) and requires the tin to be a
 pixi package (a `[package]` section in its pixi.toml). If a tin does not
 support this yet, fall back to submodule mode.

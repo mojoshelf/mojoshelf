@@ -20,6 +20,7 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .get_async("/install-modes", install_modes)
         .get_async("/packaging", packaging)
         .get_async("/build-process", packaging)
+        .get_async("/community-channel", community_channel)
         .get_async("/tins/:name", tin_page)
         .get_async("/api/tins", api_list)
         .get_async("/api/tins/:name", api_tin)
@@ -80,6 +81,10 @@ async fn install_modes(_req: Request, _ctx: RouteContext<()>) -> Result<Response
 
 async fn packaging(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
     Response::from_html(html::packaging())
+}
+
+async fn community_channel(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
+    Response::from_html(html::community_channel())
 }
 
 async fn tin_page(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
