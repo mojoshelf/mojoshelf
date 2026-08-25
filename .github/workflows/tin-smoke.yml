@@ -1,0 +1,63 @@
+name: tin-smoke
+
+# Consumer-path smoke test: for every tin on the shelf, on every platform,
+# do exactly what a user does — install the shelf extension from the conda
+# channel, `pixi shelf add <tin>`, and let pixi build it from source.
+#
+# The tin list is DISCOVERED from the registry API, so newly published tins
+# are covered automatically; only exceptions need editing here. No secrets
+# and no checkout: these jobs build third-party tin code and get nothing to
+# leak.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1" # weekly, Monday morning
+
+permissions: {}
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      tins: ${{ steps.list.outputs.tins }}
+    steps:
+      - id: list
+        run: |
+          # Tins that are not pixi-consumable yet:
+          SKIP='["browser-native"]'
+          TINS=$(curl -sf https://mojoshelf.org/api/tins \
+            | jq -c --argjson skip "$SKIP" '[.[].name | select(. as $n | $skip | index($n) | not)]')
+          echo "tins=$TINS" >> "$GITHUB_OUTPUT"
+          echo "discovered: $TINS"
+
+  smoke:
+    needs: discover
+    strategy:
+      fail-fast: false
+      matrix:
+        tin: ${{ fromJSON(needs.discover.outputs.tins) }}
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-15]
+        exclude:
+          # pontoneer does not declare linux-aarch64 yet
+          - { tin: pontoneer, os: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - name: Install pixi and the shelf extension
+        run: |
+          export PIXI_VERSION=v0.71.1
+          curl -fsSL https://pixi.sh/install.sh | bash
+          echo "$HOME/.pixi/bin" >> "$GITHUB_PATH"
+          "$HOME/.pixi/bin/pixi" global install --channel https://mojoshelf.org/channel mojoshelf
+      - name: Consume ${{ matrix.tin }}
+        run: |
+          case "${{ matrix.os }}" in
+            ubuntu-latest) P=linux-64 ;;
+            ubuntu-24.04-arm) P=linux-aarch64 ;;
+            *) P=osx-arm64 ;;
+          esac
+          mkdir smoke && cd smoke
+          printf '[workspace]\nname = "smoke"\npreview = ["pixi-build"]\nchannels = ["https://conda.modular.com/max-nightly", "conda-forge"]\nplatforms = ["%s"]\n' "$P" > pixi.toml
+          pixi shelf add "${{ matrix.tin }}"
+          pixi install
+          echo "OK: ${{ matrix.tin }} builds on $P"
