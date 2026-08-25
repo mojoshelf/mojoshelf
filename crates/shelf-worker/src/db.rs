@@ -429,6 +429,36 @@ pub async fn unenriched_channel_tins(d1: &D1Database, limit: usize) -> Result<Ve
     Ok(rows.into_iter().map(|r| r.name).collect())
 }
 
+/// A graduated source tin: record (or clear) the version the
+/// modular-community channel serves under the same name.
+pub async fn set_source_channel_version(
+    d1: &D1Database,
+    name: &str,
+    version: Option<&str>,
+) -> Result<()> {
+    d1.prepare("UPDATE tins SET channel_version = ?2 WHERE name = ?1 AND kind = 'source'")
+        .bind(&[
+            name.into(),
+            version.map(worker::wasm_bindgen::JsValue::from).unwrap_or(worker::wasm_bindgen::JsValue::NULL),
+        ])?
+        .run()
+        .await?;
+    Ok(())
+}
+
+pub async fn graduated_source_tin_names(d1: &D1Database) -> Result<Vec<String>> {
+    #[derive(Deserialize)]
+    struct Row {
+        name: String,
+    }
+    let rows = d1
+        .prepare("SELECT name FROM tins WHERE kind = 'source' AND channel_version IS NOT NULL")
+        .all()
+        .await?
+        .results::<Row>()?;
+    Ok(rows.into_iter().map(|r| r.name).collect())
+}
+
 pub async fn channel_tin_names(d1: &D1Database) -> Result<Vec<String>> {
     #[derive(Deserialize)]
     struct Row {

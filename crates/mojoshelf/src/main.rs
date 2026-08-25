@@ -313,6 +313,11 @@ fn info(reg: &Registry, name: &str) -> Result<()> {
             "  kind: modular-community channel package (latest {})",
             d.channel_version.as_deref().unwrap_or("?")
         );
+    } else if let Some(cv) = &d.channel_version {
+        println!("  graduated: also on the modular-community channel as {cv}");
+        if d.versions.is_empty() {
+            println!("  no published versions");
+        }
     } else if d.versions.is_empty() {
         println!("  no published versions");
     }

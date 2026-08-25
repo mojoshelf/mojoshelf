@@ -315,6 +315,27 @@ so.</p>"#,
         .first()
         .map(|v| v.dependencies.clone())
         .unwrap_or_default();
+    let graduated = match &d.channel_version {
+        Some(cv) if d.kind == "source" => {
+            let latest_src = d.versions.first().map(|v| v.version.as_str()).unwrap_or("0.0.0");
+            let drift = match (semver::Version::parse(cv), semver::Version::parse(latest_src)) {
+                (Ok(c), Ok(s)) if c > s => format!(
+                    " — <strong>newer than the shelf's {}</strong>",
+                    esc(latest_src)
+                ),
+                _ => String::new(),
+            };
+            format!(
+                r#"<p class="install-label">Graduated: also on the
+<a href="/community-channel">modular-community channel</a> as
+<strong>{}</strong>{} (<code>pixi add {}</code> for the binary).</p>"#,
+                esc(cv),
+                drift,
+                esc(&d.name),
+            )
+        }
+        _ => String::new(),
+    };
     let install = match d.versions.first() {
         Some(latest) => format!(
             r#"<h2>Install <span class="pick-one">— pick one</span></h2>
@@ -339,6 +360,7 @@ shelf extension installed once:</p>
 <p>{desc}</p>
 <p>by {author} — <a href="{url}">{url}</a></p>
 <p>{tags}</p>
+{graduated}
 {install}
 <h2>Depends on</h2>
 {depends_on}

@@ -61,10 +61,13 @@ pub async fn sync(env: &Env) -> Result<String> {
     let d1 = env.d1("DB")?;
     let mut mirrored = 0usize;
     for (name, version) in &latest {
-        // Source tins own their names: the upsert's WHERE guard already
-        // protects them, but skip cleanly instead of relying on it.
+        // Source tins own their names — but record that the channel now
+        // serves the same name (a graduated tin), so divergence is visible.
         if let Some(existing) = db::tin_by_name(&d1, name).await? {
             if existing.kind != "channel" {
+                if existing.channel_version.as_deref() != Some(version.as_str()) {
+                    db::set_source_channel_version(&d1, name, Some(version)).await?;
+                }
                 continue;
             }
         }
@@ -79,6 +82,13 @@ pub async fn sync(env: &Env) -> Result<String> {
         if !latest.contains_key(&name) {
             db::delete_channel_tin(&d1, &name).await?;
             pruned += 1;
+        }
+    }
+
+    // Graduated tins whose channel package disappeared: clear the marker.
+    for name in db::graduated_source_tin_names(&d1).await? {
+        if !latest.contains_key(&name) {
+            db::set_source_channel_version(&d1, &name, None).await?;
         }
     }
 
