@@ -25,5 +25,9 @@
       "migrations_dir": "migrations"
     }
   ],
+  "triggers": {
+    // modular-community mirror sync
+    "crons": ["23 */6 * * *"]
+  },
   "observability": { "enabled": true }
 }

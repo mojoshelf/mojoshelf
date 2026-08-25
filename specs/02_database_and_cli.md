@@ -25,6 +25,12 @@
 | token_hash   | TEXT    | SHA-256 of the publish token           |
 | created_at   | TEXT    | ISO 8601                               |
 
+Tins have a `kind`: `source` (git-pinned, publishable) or `channel` —
+modular-community packages mirrored automatically (cron, six-hourly) with
+their latest channel version; they install as plain conda dependencies in
+pixi mode, are rejected in submodule mode, and reserve their names against
+publishes.
+
 Authors sign in with GitHub OAuth on the website's Authors tab, where they
 generate a publish token (shown once, stored hashed) and can delete versions
 of their tins or a whole tin. Deleting is refused while another tin's

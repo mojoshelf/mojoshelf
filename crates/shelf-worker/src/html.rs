@@ -176,17 +176,27 @@ fn tin_table(tins: &[TinSummary]) -> String {
                 .iter()
                 .map(|t| format!("<span class=\"tag\">{}</span>", esc(t)))
                 .collect();
+            let badge = if b.kind == "channel" {
+                " <span class=\"tag\">channel</span>".to_string()
+            } else {
+                String::new()
+            };
             format!(
-                "<tr><td><a href=\"/tins/{name}\"><code>{name}</code></a></td>\
+                "<tr><td><a href=\"/tins/{name}\"><code>{name}</code></a>{badge}</td>\
                  <td>{}</td><td>{}</td>\
                  <td><a href=\"{}\">{}</a></td><td>{}{}</td></tr>",
                 b.latest_version.as_deref().map(esc).unwrap_or_else(|| "—".into()),
-                author_link(b.author.as_deref()),
+                if b.kind == "channel" {
+                    "modular-community".to_string()
+                } else {
+                    author_link(b.author.as_deref())
+                },
                 esc(&b.url),
                 esc(&b.url),
                 esc(b.description.as_deref().unwrap_or("")),
                 if tags.is_empty() { String::new() } else { format!("<br>{tags}") },
                 name = esc(&b.name),
+                badge = badge,
             )
         })
         .collect();
@@ -225,6 +235,29 @@ New here? See <a href="/getting-started">Getting started</a>.</p>
 }
 
 pub fn tin(d: &shelf_core::TinDetail) -> String {
+    if d.kind == "channel" {
+        let body = format!(
+            r#"<h1><code>{name}</code> <span class="tag">channel</span></h1>
+<p>A binary package from the
+<a href="/community-channel">modular-community channel</a> — latest version
+<strong>{version}</strong>. Details on
+<a href="{url}">prefix.dev</a>.</p>
+<h2>Install <span class="pick-one">— pick one</span></h2>
+<p class="install-label">with the shelf extension</p>
+<pre><code>pixi shelf add {name}</code></pre>
+<p class="install-label">or plain pixi (channel in your channel list)</p>
+<pre><code>pixi add {name}</code></pre>
+<p>Dependencies are resolved by conda — no registry pinning; your
+<code>pixi.lock</code> records the solved version. Note: channel packages
+carry their own <code>mojo-compiler</code> requirement, which may conflict
+with a workspace pinned to a different Mojo era — the solver reports it if
+so.</p>"#,
+            name = esc(&d.name),
+            version = esc(d.channel_version.as_deref().unwrap_or("?")),
+            url = esc(&d.url),
+        );
+        return page(&format!("Mojo Shelf — {}", d.name), "Tins", &body);
+    }
     let tags: String = d
         .tags
         .iter()
@@ -432,6 +465,10 @@ multiple platforms. It is complementary to mojoshelf — curated, binary,
 slower cadence vs. self-serve, source-pinned, instant. The integration
 points:</p>
 <ul>
+<li><strong>Channel packages are mirrored here automatically.</strong>
+They appear in the tin list and search with a <em>channel</em> badge, and
+<code>pixi shelf add &lt;name&gt;</code> installs them as plain conda
+dependencies. The mirror refreshes every six hours.</li>
 <li><strong>Tins can depend on its packages.</strong> Tins build into
 ordinary conda environments, so a tin's host/run dependencies can name any
 modular-community package — just keep the channel in your workspace's

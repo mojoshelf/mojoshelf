@@ -4,6 +4,7 @@
 
 mod auth;
 mod authors;
+mod channel;
 mod db;
 mod html;
 
@@ -26,6 +27,7 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .get_async("/api/tins/:name", api_tin)
         .get_async("/api/tins/:name/resolve", api_resolve)
         .post_async("/api/publish", api_publish)
+        .post_async("/api/sync-channel", api_sync_channel)
         .get_async("/authors", authors::page)
         .get_async("/authors/:login", authors::author_page)
         .get_async("/auth/login", authors::login)
@@ -41,6 +43,24 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .post_async("/admin/tins", admin_upsert)
         .run(req, env)
         .await
+}
+
+#[event(scheduled)]
+pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
+    match channel::sync(&env).await {
+        Ok(msg) => console_log!("channel sync: {msg}"),
+        Err(e) => console_log!("channel sync FAILED: {e}"),
+    }
+}
+
+/// Manual channel sync, gated by any valid publish token (idempotent).
+async fn api_sync_channel(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let d1 = ctx.env.d1("DB")?;
+    if authors::bearer_author(&req, &d1).await?.is_none() {
+        return error_json("publish token required", 401);
+    }
+    let msg = channel::sync(&ctx.env).await?;
+    Response::from_json(&json!({ "ok": true, "result": msg }))
 }
 
 pub(crate) fn error_json(msg: &str, status: u16) -> Result<Response> {
@@ -128,6 +148,18 @@ async fn api_resolve(req: Request, ctx: RouteContext<()>) -> Result<Response> {
         let Some(tin) = db::tin_by_name(&d1, &tin_name).await? else {
             return error_json(&format!("tin '{tin_name}' not found"), 404);
         };
+        if tin.kind == "channel" {
+            // Binary channel package: the conda solver owns it (and its
+            // dependency graph) — a single unpinned entry.
+            out.push(ResolvedTin {
+                version: tin.channel_version.clone().unwrap_or_default(),
+                name: tin.name,
+                url: tin.url,
+                commit_sha: String::new(),
+                kind: "channel".into(),
+            });
+            continue;
+        }
         let versions = db::versions_of(&d1, tin.id).await?;
         let chosen = match &want {
             Some(v) => versions.iter().find(|row| &row.version == v),
@@ -149,6 +181,7 @@ async fn api_resolve(req: Request, ctx: RouteContext<()>) -> Result<Response> {
             url: tin.url,
             version: chosen.version.clone(),
             commit_sha: chosen.commit_sha.clone(),
+            kind: "source".into(),
         });
     }
     Response::from_json(&out)
@@ -184,6 +217,16 @@ async fn api_publish(mut req: Request, ctx: RouteContext<()>) -> Result<Response
     let tags = shelf_core::split_tags(&body.tags.join(",")).join(",");
     let tin = match db::tin_by_name(&d1, &body.name).await? {
         Some(existing) => {
+            if existing.kind == "channel" {
+                return error_json(
+                    &format!(
+                        "'{}' is a modular-community channel package; pick a \
+                         different tin name",
+                        body.name
+                    ),
+                    409,
+                );
+            }
             if existing.author_id.is_some() && existing.author_id != Some(author.id) {
                 return error_json(
                     &format!("tin '{}' is owned by another author", body.name),

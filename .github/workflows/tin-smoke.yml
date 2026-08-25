@@ -34,7 +34,7 @@ jobs:
             # Tins that are not pixi-consumable yet:
             SKIP='["browser-native"]'
             TINS=$(curl -sf https://mojoshelf.org/api/tins \
-              | jq -c --argjson skip "$SKIP" '[.[].name | select(. as $n | $skip | index($n) | not)]')
+              | jq -c --argjson skip "$SKIP" '[.[] | select((.kind // "source") == "source") | .name | select(. as $n | $skip | index($n) | not)]')
           fi
           echo "tins=$TINS" >> "$GITHUB_OUTPUT"
           echo "discovered: $TINS"

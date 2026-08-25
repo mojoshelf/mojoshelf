@@ -152,6 +152,15 @@ fn add(reg: &Registry, spec: &str, dry_run: bool) -> Result<()> {
         .map(|(n, _)| n)
         .collect();
     for tin in &set {
+        if tin.kind == "channel" {
+            bail!(
+                "'{}' comes from the modular-community channel (binary \
+                 package); submodule mode needs a source tin. Use pixi mode \
+                 instead: pixi shelf add {}",
+                tin.name,
+                tin.name
+            );
+        }
         if installed.contains(&tin.name) {
             println!("skipping {} (already installed)", tin.name);
             continue;
@@ -282,7 +291,12 @@ fn info(reg: &Registry, name: &str) -> Result<()> {
     if !d.dependents.is_empty() {
         println!("  depended on by: {}", d.dependents.join(", "));
     }
-    if d.versions.is_empty() {
+    if d.kind == "channel" {
+        println!(
+            "  kind: modular-community channel package (latest {})",
+            d.channel_version.as_deref().unwrap_or("?")
+        );
+    } else if d.versions.is_empty() {
         println!("  no published versions");
     }
     for v in &d.versions {

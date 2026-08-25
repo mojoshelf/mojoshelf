@@ -17,6 +17,8 @@ pub struct TinRow {
     pub author: Option<String>,
     /// Comma-separated in storage; split via `shelf_core::split_tags`.
     pub tags: Option<String>,
+    pub kind: String,
+    pub channel_version: Option<String>,
 }
 
 impl TinRow {
@@ -35,6 +37,7 @@ pub struct AuthorRow {
 }
 
 const TIN_SELECT: &str = "SELECT b.id, b.name, b.url, b.description, b.author_id, b.tags, \
+    b.kind, b.channel_version, \
     a.github_login AS author FROM tins b LEFT JOIN authors a ON a.id = b.author_id";
 
 #[derive(Deserialize)]
@@ -114,11 +117,16 @@ pub async fn list_tins(d1: &D1Database, q: &str) -> Result<Vec<TinSummary>> {
             });
             TinSummary {
                 tags: b.tag_list(),
+                latest_version: if b.kind == "channel" {
+                    b.channel_version.clone()
+                } else {
+                    latest
+                },
+                kind: b.kind,
                 name: b.name,
                 url: b.url,
                 description: b.description,
                 author: b.author,
-                latest_version: latest,
             }
         })
         .collect())
@@ -149,6 +157,8 @@ pub async fn tin_detail(d1: &D1Database, name: &str) -> Result<Option<TinDetail>
     Ok(Some(TinDetail {
         tags: tin.tag_list(),
         dependents: dependents_of(d1, tin.id).await?,
+        kind: tin.kind,
+        channel_version: tin.channel_version,
         name: tin.name,
         url: tin.url,
         description: tin.description,
@@ -347,6 +357,47 @@ pub async fn delete_tin(d1: &D1Database, tin_id: i64) -> Result<()> {
         d1.prepare("DELETE FROM tins WHERE id = ?1").bind(&[id])?,
     ])
     .await?;
+    Ok(())
+}
+
+/// Mirror one modular-community channel package as a kind='channel' tin.
+/// The WHERE guard keeps source tins untouched on name conflicts.
+pub async fn upsert_channel_tin(
+    d1: &D1Database,
+    name: &str,
+    url: &str,
+    version: &str,
+) -> Result<()> {
+    d1.prepare(
+        "INSERT INTO tins (name, url, kind, channel_version) \
+         VALUES (?1, ?2, 'channel', ?3) \
+         ON CONFLICT (name) DO UPDATE SET channel_version = ?3, url = ?2, \
+         updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE tins.kind = 'channel'",
+    )
+    .bind(&[name.into(), url.into(), version.into()])?
+    .run()
+    .await?;
+    Ok(())
+}
+
+pub async fn channel_tin_names(d1: &D1Database) -> Result<Vec<String>> {
+    #[derive(Deserialize)]
+    struct Row {
+        name: String,
+    }
+    let rows = d1
+        .prepare("SELECT name FROM tins WHERE kind = 'channel'")
+        .all()
+        .await?
+        .results::<Row>()?;
+    Ok(rows.into_iter().map(|r| r.name).collect())
+}
+
+pub async fn delete_channel_tin(d1: &D1Database, name: &str) -> Result<()> {
+    d1.prepare("DELETE FROM tins WHERE name = ?1 AND kind = 'channel'")
+        .bind(&[name.into()])?
+        .run()
+        .await?;
     Ok(())
 }
 

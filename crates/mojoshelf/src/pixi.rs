@@ -61,7 +61,11 @@ fn add_inner(reg: &Registry, spec: &str, dry_run: bool, force: bool) -> Result<(
     if dry_run {
         println!("would run:");
         for b in &set {
-            println!("  pixi add --git {} --rev {} {}", b.url, b.commit_sha, b.name);
+            if b.kind == "channel" {
+                println!("  pixi add {}  # modular-community channel", b.name);
+            } else {
+                println!("  pixi add --git {} --rev {} {}", b.url, b.commit_sha, b.name);
+            }
         }
         return Ok(());
     }
@@ -74,13 +78,23 @@ fn add_inner(reg: &Registry, spec: &str, dry_run: bool, force: bool) -> Result<(
                 .args(["remove", &b.name])
                 .output();
         }
-        run_pixi(&["add", "--git", &b.url, "--rev", &b.commit_sha, &b.name])?;
-        println!(
-            "added {} {} ({}) as a pixi git dependency",
-            b.name,
-            b.version,
-            &b.commit_sha[..12]
-        );
+        if b.kind == "channel" {
+            // Binary modular-community package: plain conda dependency; the
+            // solver owns version + dependency resolution.
+            run_pixi(&["add", &b.name])?;
+            println!(
+                "added {} (modular-community channel, latest {})",
+                b.name, b.version
+            );
+        } else {
+            run_pixi(&["add", "--git", &b.url, "--rev", &b.commit_sha, &b.name])?;
+            println!(
+                "added {} {} ({}) as a pixi git dependency",
+                b.name,
+                b.version,
+                &b.commit_sha[..12]
+            );
+        }
     }
     Ok(())
 }

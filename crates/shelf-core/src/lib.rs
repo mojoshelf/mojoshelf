@@ -12,6 +12,14 @@ pub struct TinSummary {
     #[serde(default)]
     pub tags: Vec<String>,
     pub latest_version: Option<String>,
+    /// "source" (git-pinned tin) or "channel" (mirrored modular-community
+    /// binary package).
+    #[serde(default = "default_kind")]
+    pub kind: String,
+}
+
+pub fn default_kind() -> String {
+    "source".into()
 }
 
 /// One published version of a tin.
@@ -37,6 +45,11 @@ pub struct TinDetail {
     /// Names of other tins with a published version depending on this one.
     #[serde(default)]
     pub dependents: Vec<String>,
+    #[serde(default = "default_kind")]
+    pub kind: String,
+    /// For kind "channel": the latest version on the channel.
+    #[serde(default)]
+    pub channel_version: Option<String>,
 }
 
 /// One entry of the flat install set from `GET /api/tins/:name/resolve`.
@@ -45,7 +58,10 @@ pub struct ResolvedTin {
     pub name: String,
     pub url: String,
     pub version: String,
+    /// Empty for kind "channel" (no git pin — the conda solver owns it).
     pub commit_sha: String,
+    #[serde(default = "default_kind")]
+    pub kind: String,
 }
 
 /// Body of `POST /api/publish`. The first publish of a new name registers
