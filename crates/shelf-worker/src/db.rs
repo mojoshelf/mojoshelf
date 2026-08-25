@@ -19,6 +19,7 @@ pub struct TinRow {
     pub tags: Option<String>,
     pub kind: String,
     pub channel_version: Option<String>,
+    pub channel_author: Option<String>,
 }
 
 impl TinRow {
@@ -37,7 +38,7 @@ pub struct AuthorRow {
 }
 
 const TIN_SELECT: &str = "SELECT b.id, b.name, b.url, b.description, b.author_id, b.tags, \
-    b.kind, b.channel_version, \
+    b.kind, b.channel_version, b.channel_author, \
     a.github_login AS author FROM tins b LEFT JOIN authors a ON a.id = b.author_id";
 
 #[derive(Deserialize)]
@@ -122,11 +123,15 @@ pub async fn list_tins(d1: &D1Database, q: &str) -> Result<Vec<TinSummary>> {
                 } else {
                     latest
                 },
+                author: if b.kind == "channel" {
+                    b.channel_author.clone().filter(|a| !a.is_empty())
+                } else {
+                    b.author
+                },
                 kind: b.kind,
                 name: b.name,
                 url: b.url,
                 description: b.description,
-                author: b.author,
             }
         })
         .collect())
@@ -157,12 +162,16 @@ pub async fn tin_detail(d1: &D1Database, name: &str) -> Result<Option<TinDetail>
     Ok(Some(TinDetail {
         tags: tin.tag_list(),
         dependents: dependents_of(d1, tin.id).await?,
+        author: if tin.kind == "channel" {
+            tin.channel_author.clone().filter(|a| !a.is_empty())
+        } else {
+            tin.author
+        },
         kind: tin.kind,
         channel_version: tin.channel_version,
         name: tin.name,
         url: tin.url,
         description: tin.description,
-        author: tin.author,
         versions,
     }))
 }
@@ -378,6 +387,46 @@ pub async fn upsert_channel_tin(
     .run()
     .await?;
     Ok(())
+}
+
+/// Recipe-derived metadata for a channel tin. Empty author = "checked,
+/// none found" (prevents refetch loops).
+pub async fn enrich_channel_tin(
+    d1: &D1Database,
+    name: &str,
+    author: &str,
+    description: Option<&str>,
+    url: Option<&str>,
+) -> Result<()> {
+    d1.prepare(
+        "UPDATE tins SET channel_author = ?2, \
+         description = COALESCE(?3, description), \
+         url = COALESCE(?4, url) \
+         WHERE name = ?1 AND kind = 'channel'",
+    )
+    .bind(&[
+        name.into(),
+        author.into(),
+        description.map(worker::wasm_bindgen::JsValue::from).unwrap_or(worker::wasm_bindgen::JsValue::NULL),
+        url.map(worker::wasm_bindgen::JsValue::from).unwrap_or(worker::wasm_bindgen::JsValue::NULL),
+    ])?
+    .run()
+    .await?;
+    Ok(())
+}
+
+pub async fn unenriched_channel_tins(d1: &D1Database, limit: usize) -> Result<Vec<String>> {
+    #[derive(Deserialize)]
+    struct Row {
+        name: String,
+    }
+    let rows = d1
+        .prepare("SELECT name FROM tins WHERE kind = 'channel' AND channel_author IS NULL LIMIT ?1")
+        .bind(&[worker::wasm_bindgen::JsValue::from(limit as f64)])?
+        .all()
+        .await?
+        .results::<Row>()?;
+    Ok(rows.into_iter().map(|r| r.name).collect())
 }
 
 pub async fn channel_tin_names(d1: &D1Database) -> Result<Vec<String>> {

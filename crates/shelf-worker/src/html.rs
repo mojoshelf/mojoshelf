@@ -187,7 +187,14 @@ fn tin_table(tins: &[TinSummary]) -> String {
                  <td><a href=\"{}\">{}</a></td><td>{}{}</td></tr>",
                 b.latest_version.as_deref().map(esc).unwrap_or_else(|| "—".into()),
                 if b.kind == "channel" {
-                    "modular-community".to_string()
+                    match b.author.as_deref() {
+                        Some(a) => format!(
+                            "<a href=\"https://github.com/{}\">{}</a>",
+                            esc(a),
+                            esc(a)
+                        ),
+                        None => "modular-community".to_string(),
+                    }
                 } else {
                     author_link(b.author.as_deref())
                 },
@@ -227,6 +234,9 @@ New here? See <a href="/getting-started">Getting started</a>.</p>
 </form>
 {result_line}
 <h2>Tins</h2>
+<p class="install-label">Includes the
+<a href="/community-channel">modular-community channel</a>, mirrored here —
+its packages are badged <span class="tag">channel</span>.</p>
 {table}"#,
         q = esc(q),
         table = tin_table(tins),
@@ -236,12 +246,26 @@ New here? See <a href="/getting-started">Getting started</a>.</p>
 
 pub fn tin(d: &shelf_core::TinDetail) -> String {
     if d.kind == "channel" {
+        let maintainer = match d.author.as_deref() {
+            Some(a) => format!(
+                " Maintained by <a href=\"https://github.com/{}\">{}</a>.",
+                esc(a),
+                esc(a)
+            ),
+            None => String::new(),
+        };
+        let desc = d
+            .description
+            .as_deref()
+            .map(|s| format!("<p>{}</p>", esc(s)))
+            .unwrap_or_default();
         let body = format!(
             r#"<h1><code>{name}</code> <span class="tag">channel</span></h1>
+{desc}
 <p>A binary package from the
 <a href="/community-channel">modular-community channel</a> — latest version
-<strong>{version}</strong>. Details on
-<a href="{url}">prefix.dev</a>.</p>
+<strong>{version}</strong>.{maintainer}
+Repository / details: <a href="{url}">{url}</a>.</p>
 <h2>Install <span class="pick-one">— pick one</span></h2>
 <p class="install-label">with the shelf extension</p>
 <pre><code>pixi shelf add {name}</code></pre>
@@ -255,6 +279,8 @@ so.</p>"#,
             name = esc(&d.name),
             version = esc(d.channel_version.as_deref().unwrap_or("?")),
             url = esc(&d.url),
+            desc = desc,
+            maintainer = maintainer,
         );
         return page(&format!("Mojo Shelf — {}", d.name), "Tins", &body);
     }
@@ -459,37 +485,36 @@ a Python-interop tin like <code>pontoneer</code>.</p>"#;
 pub fn community_channel() -> String {
     let body = r#"<h1>The modular-community channel</h1>
 <p><a href="https://repo.prefix.dev/modular-community">modular-community</a>
-is Modular's curated channel of community packages: contributors submit
-rattler-build recipes by PR, CI builds <em>binary</em> conda packages for
-multiple platforms. It is complementary to mojoshelf — curated, binary,
-slower cadence vs. self-serve, source-pinned, instant. The integration
-points:</p>
-<ul>
-<li><strong>Channel packages are mirrored here automatically.</strong>
-They appear in the tin list and search with a <em>channel</em> badge, and
-<code>pixi shelf add &lt;name&gt;</code> installs them as plain conda
-dependencies. The mirror refreshes every six hours.</li>
-<li><strong>Tins can depend on its packages.</strong> Tins build into
-ordinary conda environments, so a tin's host/run dependencies can name any
-modular-community package — just keep the channel in your workspace's
-channel list (our snippets include it).</li>
-<li><strong>One namespace.</strong> Conda names are shared across every
-channel in an environment: when naming a tin, check
-<code>pixi search</code> against conda-forge <em>and</em> modular-community
-(a tin named <code>bridge</code> or <code>crypto</code> would collide
-today).</li>
-<li><strong>The graduation path.</strong> A tin's pixi-build setup is most
-of a modular-community submission — the <code>[package]</code> section maps
-to their recipe, and FFI shim recipes are rattler-build recipes already.
-Iterate source-first on the shelf; when a tin stabilizes, submit it to
-modular-community for curated binary distribution.</li>
-<li><strong>One direction only.</strong> Channel packages cannot depend on
-tins (binary packages cannot reference source dependencies) — the arrow
-points from the shelf toward the channel.</li>
-</ul>
-<p>mojoshelf's role in that picture: the fast-iteration, source-pinning
-layer that feeds the official ecosystem — and retires the day official
-packaging makes it redundant.</p>"#;
+is Modular's curated channel of community packages: maintainers submit
+rattler-build recipes by pull request, and CI publishes <em>binary</em> conda
+packages for multiple platforms.</p>
+<h2>Mirrored on the shelf</h2>
+<p>Every channel package appears here automatically — in the
+<a href="/">tin list</a> and search, badged <span class="tag">channel</span>,
+refreshed every six hours from the channel's repodata and enriched with the
+maintainer, summary, and repository from its recipe. Installing is uniform:</p>
+<pre><code>pixi shelf add emberjson    # or plain: pixi add emberjson</code></pre>
+<p>Channel tins are plain conda dependencies: no registry pinning (your
+<code>pixi.lock</code> records the solved version), and the conda solver
+owns their dependency graphs. One caveat inherited from the ecosystem:
+each package carries its own <code>mojo-compiler</code> requirement, so a
+workspace pinned to a different Mojo era gets a clear solver conflict
+rather than an install.</p>
+<h2>How the two kinds differ</h2>
+<p><strong>Source tins</strong> are git repos, registry-pinned to published
+commits, built from source on install, published here with
+<code>shelf publish</code>. <strong>Channel tins</strong> are prebuilt
+binaries, curated upstream, mirrored read-only — they cannot be published
+to, installed as submodules, or depended on by name pins. The two share one
+conda namespace, so channel names are reserved: a publish under a channel
+package's name is rejected.</p>
+<h2>The graduation path</h2>
+<p>A source tin's pixi-build setup is most of a modular-community
+submission — the <code>[package]</code> section maps to a recipe, and FFI
+shim recipes are rattler-build recipes already. Iterate source-first on the
+shelf; when a tin stabilizes, submit it upstream for curated binary
+distribution. mojoshelf is the fast-iteration layer that feeds the official
+ecosystem — and retires the day official packaging makes it redundant.</p>"#;
     page("Mojo Shelf community channel", "Community channel", body)
 }
 
