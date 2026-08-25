@@ -69,7 +69,7 @@ Then import in Mojo code, e.g. `from csv import parse, read`. Note: with
 `mojo run`, `-I` flags must come BEFORE the source file — arguments after
 the file are passed to the program.
 
-A complete working example: https://github.com/mojoshelf/example
+A complete working example (pixi mode): https://github.com/mojoshelf/example
 
 ## Maintain
 

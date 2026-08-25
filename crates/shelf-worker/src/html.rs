@@ -438,9 +438,11 @@ preview = ["pixi-build"]</code></pre>
 <p>The tin and its dependencies are added flat, each pinned to its published
 commit via <code>pixi add --git … --rev …</code>. Note: pixi-build is a pixi
 preview feature, and the tin must be a pixi package (a
-<code>[package]</code> section with the pixi-build-mojo backend) — tins on
-the shelf are still adopting this; submodule mode works for every tin
-today.</p>
+<code>[package]</code> section with the pixi-build-mojo backend) — nearly
+every tin on the shelf supports it.</p>
+<p>See <a href="https://github.com/mojoshelf/example">mojoshelf/example</a> for a
+complete working project consuming the <a href="/tins/csv">csv</a> tin this
+way — clone it and <code>pixi run run</code>.</p>
 <h2>Submodule mode</h2>
 <p>From your project's repo root:</p>
 <pre><code>shelf add &lt;name&gt;</code></pre>
@@ -449,9 +451,6 @@ today.</p>
 compiler at them with <code>-I</code>, wrapped as a pixi task:</p>
 <pre><code>[tasks]
 run = "mojo run -I shelf/csv/src src/main.mojo"</code></pre>
-<p>See <a href="https://github.com/mojoshelf/example">mojoshelf/example</a> for a
-complete working project consuming the <a href="/tins/csv">csv</a> tin —
-clone it with <code>--recurse-submodules</code> and <code>pixi run run</code>.</p>
 <h2>Useful commands</h2>
 <table>
 <tr><td><code>shelf search [term]</code></td><td>search the registry (name, description, tags)</td></tr>
