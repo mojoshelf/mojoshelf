@@ -67,6 +67,13 @@ jobs:
           esac
           mkdir smoke && cd smoke
           printf '[workspace]\nname = "smoke"\npreview = ["pixi-build"]\nchannels = ["https://conda.modular.com/max-nightly", "conda-forge"]\nplatforms = ["%s"]\n' "$P" > pixi.toml
-          pixi shelf add "${{ matrix.tin }}" || { pixi install -v; exit 1; }
-          pixi install -v
+          # pixi streams rattler build output only to a TTY; `script` fakes one
+          # so failures show the actual compiler errors in the CI log.
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            pixi shelf add "${{ matrix.tin }}"
+            script -qec "pixi install" /dev/null
+          else
+            pixi shelf add "${{ matrix.tin }}"
+            pixi install
+          fi
           echo "OK: ${{ matrix.tin }} builds on $P"
