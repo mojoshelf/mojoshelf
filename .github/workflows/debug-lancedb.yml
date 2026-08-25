@@ -1,5 +1,5 @@
-# Temporary: raw cargo build of the lancedb shim on linux to surface the
-# compile error that rattler's build swallows. Delete when resolved.
+# Temporary: reproduce the lancedb-shim rattler build directly so its full
+# build log streams into CI. Delete when resolved.
 name: debug-lancedb
 on: workflow_dispatch
 permissions: {}
@@ -14,4 +14,4 @@ jobs:
           export PATH="$HOME/.pixi/bin:$PATH"
           git clone --depth 1 https://github.com/millfolio/lancedb.mojo.git
           cd lancedb.mojo/ffi
-          pixi exec --spec rust --spec libprotobuf -- cargo build --release 2>&1 | tail -120
+          pixi exec --spec rattler-build -- rattler-build build --recipe recipe.yaml --output-dir /tmp/out 2>&1 | tail -150
