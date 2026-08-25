@@ -72,3 +72,13 @@ shelf publish
 # 4. verify
 shelf info <name>
 ```
+
+## Graduating to the modular-community channel
+
+When a tin is stable, `shelf graduate` (from the tin's repo root) generates
+a channel-ready rattler-build `recipe.yaml` — preflight-checked, source
+pinned to the pushed commit, license and maintainer detected
+(`--maintainer` / `--license` to override) — and prints the fork-and-PR
+submission steps for github.com/modular/modular-community. Dependencies on
+other tins must already exist on the channel; FFI shims need hand-porting
+into the recipe (the command warns).

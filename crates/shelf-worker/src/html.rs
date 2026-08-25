@@ -509,12 +509,16 @@ to, installed as submodules, or depended on by name pins. The two share one
 conda namespace, so channel names are reserved: a publish under a channel
 package's name is rejected.</p>
 <h2>The graduation path</h2>
-<p>A source tin's pixi-build setup is most of a modular-community
-submission — the <code>[package]</code> section maps to a recipe, and FFI
-shim recipes are rattler-build recipes already. Iterate source-first on the
-shelf; when a tin stabilizes, submit it upstream for curated binary
-distribution. mojoshelf is the fast-iteration layer that feeds the official
-ecosystem — and retires the day official packaging makes it redundant.</p>"#;
+<p>When a source tin stabilizes, graduate it to the channel — the CLI does
+the ceremony:</p>
+<pre><code>shelf graduate    # from the tin's repo root</code></pre>
+<p>It preflights the tin (pixi package layout, license, pushed commit,
+summary), generates a channel-ready <code>recipe.yaml</code> — source pinned
+to your commit, compiler range derived from your pin, a smoke test, license
+and maintainer filled in — and prints the fork-and-PR steps. Iterate
+source-first on the shelf; graduate for curated binary distribution.
+mojoshelf is the fast-iteration layer that feeds the official ecosystem —
+and retires the day official packaging makes it redundant.</p>"#;
     page("Mojo Shelf community channel", "Community channel", body)
 }
 

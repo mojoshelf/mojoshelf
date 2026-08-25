@@ -1,4 +1,5 @@
 mod git;
+mod graduate;
 mod pixi;
 mod registry;
 
@@ -53,6 +54,19 @@ enum Cmd {
     Info { name: String },
     /// Publish the version in ./shelf.toml to the registry.
     Publish,
+    /// Generate a modular-community channel recipe from this tin (the
+    /// graduation path): preflight checks, recipe.yaml, submission steps.
+    Graduate {
+        /// GitHub username for extra.maintainers (default: the repo owner).
+        #[arg(long)]
+        maintainer: Option<String>,
+        /// SPDX license id (default: detected from the LICENSE file).
+        #[arg(long)]
+        license: Option<String>,
+        /// Output directory for the generated recipe.
+        #[arg(long, default_value = "community-recipe")]
+        out: String,
+    },
 }
 
 /// True when running as the pixi extension (`pixi shelf …` dispatches to a
@@ -85,6 +99,9 @@ fn main() {
         Cmd::Search { term } => search(&reg, term.as_deref().unwrap_or("")),
         Cmd::Info { name } => info(&reg, &name),
         Cmd::Publish => publish(&reg),
+        Cmd::Graduate { maintainer, license, out } => {
+            graduate::run(maintainer.as_deref(), license.as_deref(), &out)
+        }
     };
     if let Err(e) = result {
         eprintln!("error: {e:#}");
@@ -109,7 +126,7 @@ mod tests {
 
 /// Converts an ssh-style remote (git@host:owner/repo) to https so that
 /// consumers without ssh access can clone the submodule.
-fn https_url(origin: &str) -> String {
+pub(crate) fn https_url(origin: &str) -> String {
     match origin.strip_prefix("git@").and_then(|rest| rest.split_once(':')) {
         Some((host, path)) => format!("https://{host}/{path}"),
         None => origin.to_string(),
