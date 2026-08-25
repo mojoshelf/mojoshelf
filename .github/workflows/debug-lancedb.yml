@@ -1,0 +1,17 @@
+# Temporary: raw cargo build of the lancedb shim on linux to surface the
+# compile error that rattler's build swallows. Delete when resolved.
+name: debug-lancedb
+on: workflow_dispatch
+permissions: {}
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - run: |
+          export PIXI_VERSION=v0.71.1
+          curl -fsSL https://pixi.sh/install.sh | bash
+          export PATH="$HOME/.pixi/bin:$PATH"
+          git clone --depth 1 https://github.com/millfolio/lancedb.mojo.git
+          cd lancedb.mojo/ffi
+          pixi exec --spec rust --spec libprotobuf -- cargo build --release 2>&1 | tail -120

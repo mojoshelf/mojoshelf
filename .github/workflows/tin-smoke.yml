@@ -70,7 +70,7 @@ jobs:
           # pixi streams rattler build output only to a TTY; `script` fakes one
           # so failures show the actual compiler errors in the CI log.
           if [ "$RUNNER_OS" = "Linux" ]; then
-            pixi shelf add "${{ matrix.tin }}"
+            script -qec "pixi shelf add ${{ matrix.tin }}" /dev/null
             script -qec "pixi install" /dev/null
           else
             pixi shelf add "${{ matrix.tin }}"
