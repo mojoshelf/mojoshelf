@@ -1,0 +1,29 @@
+name: Bug report
+description: Something in the shelf CLI, the registry, or mojoshelf.org misbehaves
+labels: [bug]
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options: [shelf CLI, pixi shelf extension, registry / website, a published tin, conda channel]
+    validations: { required: true }
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you run, what did you expect, what did you get?
+      placeholder: |
+        $ pixi shelf add docx
+        ...
+    validations: { required: true }
+  - type: input
+    id: version
+    attributes:
+      label: shelf version
+      placeholder: shelf 0.1.1 (shelf --version)
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      placeholder: macOS 15 / osx-arm64

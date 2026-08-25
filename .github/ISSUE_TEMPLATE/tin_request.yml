@@ -1,0 +1,15 @@
+name: Tin request
+description: Suggest a Mojo library to publish on the shelf
+labels: [tin-request]
+body:
+  - type: input
+    id: repo
+    attributes:
+      label: Repository
+      placeholder: https://github.com/owner/library.mojo
+    validations: { required: true }
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it belongs on the shelf
+    validations: { required: true }
