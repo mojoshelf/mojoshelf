@@ -92,7 +92,7 @@ pub async fn sync(env: &Env) -> Result<String> {
         }
     }
 
-    let enriched = match enrich(&d1).await {
+    let enriched = match enrich(env, &d1).await {
         Ok(n) => n.to_string(),
         Err(e) => format!("ERROR: {e}"),
     };
@@ -244,7 +244,7 @@ fn repo_owner(url: &str) -> Option<String> {
 /// Fill maintainer/description/repository for channel tins that lack them,
 /// from the modular-community recipe files. Dir names are matched
 /// case-insensitively to package names.
-async fn enrich(d1: &worker::D1Database) -> Result<usize> {
+async fn enrich(env: &Env, d1: &worker::D1Database) -> Result<usize> {
     let pending = db::unenriched_channel_tins(d1, ENRICH_BATCH).await?;
     if pending.is_empty() {
         return Ok(0);
@@ -256,19 +256,9 @@ async fn enrich(d1: &worker::D1Database) -> Result<usize> {
     }
     let listing_url =
         format!("https://api.github.com/repos/{RECIPES_REPO}/contents/recipes");
-    let mut headers = Headers::new();
-    headers.set("User-Agent", "mojoshelf-sync")?;
-    let mut init = RequestInit::new();
-    init.with_headers(headers);
-    let req = Request::new_with_init(&listing_url, &init)?;
-    let mut res = Fetch::Request(req).send().await?;
-    if res.status_code() != 200 {
-        return Err(Error::RustError(format!(
-            "recipes listing returned {}",
-            res.status_code()
-        )));
-    }
-    let dirs: Vec<DirEntry> = res.json().await?;
+    let dirs: Vec<DirEntry> = github_json(env, &listing_url)
+        .await?
+        .ok_or_else(|| Error::RustError("recipes listing unavailable".into()))?;
     // Match package name to recipe dir with increasing looseness: exact
     // (case-insensitive), separator-insensitive, then with mojo affixes
     // stripped from the dir name (mojo-libc -> libc, mosaic-mojo -> mosaic).
