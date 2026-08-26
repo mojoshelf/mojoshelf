@@ -678,6 +678,14 @@ run = "mojo run -I shelf/csv/src src/main.mojo"</code></pre>
 </table>
 <p>Every command works in both modes; prefix with <code>pixi</code> (or pass
 <code>--pixi</code>) for pixi mode.</p>
+<h2>Agent skills</h2>
+<p>Working with a coding agent? Two
+<a href="https://agentskills.io">Agent Skills</a> ship with the
+<a href="https://github.com/mojoshelf/mojoshelf">mojoshelf repo</a> — one
+teaches your agent to consume tins, the other to publish them:</p>
+<pre><code>npx skills add mojoshelf/mojoshelf                                  # pick interactively
+npx skills add mojoshelf/mojoshelf --skill mojoshelf-consume --yes  # or one directly
+npx skills add mojoshelf/mojoshelf --skill mojoshelf-publish --yes</code></pre>
 <p>Want to publish your own tin? See the <a href="/authors">Authors</a> page.</p>"#;
     page("Mojo Shelf getting started", "Getting started", body)
 }
