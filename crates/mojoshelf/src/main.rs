@@ -308,6 +308,13 @@ fn info(reg: &Registry, name: &str) -> Result<()> {
     if !d.dependents.is_empty() {
         println!("  depended on by: {}", d.dependents.join(", "));
     }
+    if let (Some(stars), Some(push)) = (d.stars, d.last_push.as_deref()) {
+        let commits = match (d.commits_month, d.commits_year) {
+            (Some(m), Some(y)) => format!("; {m} commits last month, {y} last year"),
+            _ => String::new(),
+        };
+        println!("  activity: {stars} stars; last push {push}{commits}");
+    }
     if d.kind == "channel" {
         println!(
             "  kind: modular-community channel package (latest {})",

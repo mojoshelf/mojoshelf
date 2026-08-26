@@ -146,6 +146,59 @@ fn page(title: &str, active: &str, body: &str) -> String {
     )
 }
 
+/// "https://github.com/owner/repo.git" -> "owner/repo" (else the host).
+fn short_repo(url: &str) -> String {
+    match url.split("github.com/").nth(1) {
+        Some(rest) => {
+            let mut parts = rest.trim_end_matches(".git").split('/');
+            match (parts.next(), parts.next()) {
+                (Some(o), Some(r)) if !o.is_empty() && !r.is_empty() => format!("{o}/{r}"),
+                _ => url.trim_start_matches("https://").to_string(),
+            }
+        }
+        None => url
+            .trim_start_matches("https://")
+            .split('/')
+            .next()
+            .unwrap_or(url)
+            .to_string(),
+    }
+}
+
+/// "3d", "2mo", "1y" since an ISO timestamp; empty when unparsable.
+fn age(iso: &str) -> String {
+    let parsed = worker::js_sys::Date::parse(iso);
+    if parsed.is_nan() {
+        return String::new();
+    }
+    let days = ((worker::js_sys::Date::now() - parsed) / 86_400_000.0).max(0.0) as i64;
+    if days < 1 {
+        "today".into()
+    } else if days < 60 {
+        format!("{days}d")
+    } else if days < 365 {
+        format!("{}mo", days / 30)
+    } else {
+        format!("{}y", days / 365)
+    }
+}
+
+/// Compact "⭐ 12 · 3d" cell; em dash before any data arrives.
+fn activity_cell(stars: Option<i64>, last_push: Option<&str>) -> String {
+    match (stars, last_push) {
+        (Some(s), Some(p)) => {
+            let a = age(p);
+            if a.is_empty() {
+                format!("⭐ {s}")
+            } else {
+                format!("⭐ {s} · {a}")
+            }
+        }
+        (Some(s), None) => format!("⭐ {s}"),
+        _ => "—".into(),
+    }
+}
+
 fn author_link(author: Option<&str>) -> String {
     match author {
         Some(a) => format!("<a href=\"/authors/{}\">{}</a>", esc(a), esc(a)),
@@ -184,7 +237,7 @@ fn tin_table(tins: &[TinSummary]) -> String {
             format!(
                 "<tr><td><a href=\"/tins/{name}\"><code>{name}</code></a>{badge}</td>\
                  <td>{}</td><td>{}</td>\
-                 <td><a href=\"{}\">{}</a></td><td>{}{}</td></tr>",
+                 <td><a href=\"{}\">{}</a></td><td>{activity}</td><td>{}{}</td></tr>",
                 b.latest_version.as_deref().map(esc).unwrap_or_else(|| "—".into()),
                 if b.kind == "channel" {
                     match b.author.as_deref() {
@@ -199,17 +252,18 @@ fn tin_table(tins: &[TinSummary]) -> String {
                     author_link(b.author.as_deref())
                 },
                 esc(&b.url),
-                esc(&b.url),
+                esc(&short_repo(&b.url)),
                 esc(b.description.as_deref().unwrap_or("")),
                 if tags.is_empty() { String::new() } else { format!("<br>{tags}") },
                 name = esc(&b.name),
                 badge = badge,
+                activity = activity_cell(b.stars, b.last_push.as_deref()),
             )
         })
         .collect();
     format!(
         "<table><tr><th>tin</th><th>latest</th><th>author</th>\
-         <th>repository</th><th>description</th></tr>{rows}</table>"
+         <th>repository</th><th>activity</th><th>description</th></tr>{rows}</table>"
     )
 }
 
@@ -244,6 +298,23 @@ its packages are badged <span class="tag">channel</span>.</p>
     page("Mojo Shelf", "Tins", &body)
 }
 
+fn liveliness_line(d: &shelf_core::TinDetail) -> String {
+    let (Some(stars), Some(push)) = (d.stars, d.last_push.as_deref()) else {
+        return String::new();
+    };
+    let mut parts = vec![format!("⭐ {stars}"), format!("last commit {} ago", age(push))];
+    if let Some(m) = d.commits_month {
+        parts.push(format!("{m} commit{} last month", if m == 1 { "" } else { "s" }));
+    }
+    if let Some(y) = d.commits_year {
+        parts.push(format!("{y} last year"));
+    }
+    format!(
+        "<p class=\"install-label\">{}</p>",
+        parts.join(" · ")
+    )
+}
+
 pub fn tin(d: &shelf_core::TinDetail) -> String {
     if d.kind == "channel" {
         let maintainer = match d.author.as_deref() {
@@ -265,7 +336,8 @@ pub fn tin(d: &shelf_core::TinDetail) -> String {
 <p>A binary package from the
 <a href="/community-channel">modular-community channel</a> — latest version
 <strong>{version}</strong>.{maintainer}
-Repository / details: <a href="{url}">{url}</a>.</p>
+Repository / details: <a href="{url}">{short}</a>.</p>
+{liveliness}
 <h2>Install <span class="pick-one">— pick one</span></h2>
 <p class="install-label">with the shelf extension</p>
 <pre><code>pixi shelf add {name}</code></pre>
@@ -279,8 +351,10 @@ so.</p>"#,
             name = esc(&d.name),
             version = esc(d.channel_version.as_deref().unwrap_or("?")),
             url = esc(&d.url),
+            short = esc(&short_repo(&d.url)),
             desc = desc,
             maintainer = maintainer,
+            liveliness = liveliness_line(d),
         );
         return page(&format!("Mojo Shelf — {}", d.name), "Tins", &body);
     }
@@ -315,6 +389,7 @@ so.</p>"#,
         .first()
         .map(|v| v.dependencies.clone())
         .unwrap_or_default();
+    let liveliness = liveliness_line(d);
     let graduated = match &d.channel_version {
         Some(cv) if d.kind == "source" => {
             let latest_src = d.versions.first().map(|v| v.version.as_str()).unwrap_or("0.0.0");
@@ -360,6 +435,7 @@ shelf extension installed once:</p>
 <p>{desc}</p>
 <p>by {author} — <a href="{url}">{url}</a></p>
 <p>{tags}</p>
+{liveliness}
 {graduated}
 {install}
 <h2>Depends on</h2>

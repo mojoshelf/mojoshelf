@@ -20,6 +20,10 @@ pub struct TinRow {
     pub kind: String,
     pub channel_version: Option<String>,
     pub channel_author: Option<String>,
+    pub stars: Option<i64>,
+    pub last_push: Option<String>,
+    pub commits_month: Option<i64>,
+    pub commits_year: Option<i64>,
 }
 
 impl TinRow {
@@ -39,6 +43,7 @@ pub struct AuthorRow {
 
 const TIN_SELECT: &str = "SELECT b.id, b.name, b.url, b.description, b.author_id, b.tags, \
     b.kind, b.channel_version, b.channel_author, \
+    b.stars, b.last_push, b.commits_month, b.commits_year, \
     a.github_login AS author FROM tins b LEFT JOIN authors a ON a.id = b.author_id";
 
 #[derive(Deserialize)]
@@ -129,6 +134,8 @@ pub async fn list_tins(d1: &D1Database, q: &str) -> Result<Vec<TinSummary>> {
                     b.author
                 },
                 kind: b.kind,
+                stars: b.stars,
+                last_push: b.last_push,
                 name: b.name,
                 url: b.url,
                 description: b.description,
@@ -169,6 +176,10 @@ pub async fn tin_detail(d1: &D1Database, name: &str) -> Result<Option<TinDetail>
         },
         kind: tin.kind,
         channel_version: tin.channel_version,
+        stars: tin.stars,
+        last_push: tin.last_push,
+        commits_month: tin.commits_month,
+        commits_year: tin.commits_year,
         name: tin.name,
         url: tin.url,
         description: tin.description,
@@ -380,7 +391,7 @@ pub async fn upsert_channel_tin(
     d1.prepare(
         "INSERT INTO tins (name, url, kind, channel_version) \
          VALUES (?1, ?2, 'channel', ?3) \
-         ON CONFLICT (name) DO UPDATE SET channel_version = ?3, url = ?2, \
+         ON CONFLICT (name) DO UPDATE SET channel_version = ?3, \
          updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE tins.kind = 'channel'",
     )
     .bind(&[name.into(), url.into(), version.into()])?
@@ -457,6 +468,51 @@ pub async fn graduated_source_tin_names(d1: &D1Database) -> Result<Vec<String>> 
         .await?
         .results::<Row>()?;
     Ok(rows.into_iter().map(|r| r.name).collect())
+}
+
+/// GitHub-hosted tins whose liveliness is oldest (or never fetched).
+pub async fn stale_liveliness_tins(d1: &D1Database, limit: usize) -> Result<Vec<(String, String)>> {
+    #[derive(Deserialize)]
+    struct Row {
+        name: String,
+        url: String,
+    }
+    let rows = d1
+        .prepare(
+            "SELECT name, url FROM tins WHERE url LIKE '%github.com%' \
+             ORDER BY liveliness_at IS NOT NULL, liveliness_at ASC LIMIT ?1",
+        )
+        .bind(&[worker::wasm_bindgen::JsValue::from(limit as f64)])?
+        .all()
+        .await?
+        .results::<Row>()?;
+    Ok(rows.into_iter().map(|r| (r.name, r.url)).collect())
+}
+
+pub async fn set_liveliness(
+    d1: &D1Database,
+    name: &str,
+    stars: i64,
+    last_push: &str,
+    commits_month: Option<i64>,
+    commits_year: Option<i64>,
+) -> Result<()> {
+    d1.prepare(
+        "UPDATE tins SET stars = ?2, last_push = ?3, \
+         commits_month = COALESCE(?4, commits_month), \
+         commits_year = COALESCE(?5, commits_year), \
+         liveliness_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE name = ?1",
+    )
+    .bind(&[
+        name.into(),
+        worker::wasm_bindgen::JsValue::from(stars as f64),
+        last_push.into(),
+        commits_month.map(|v| worker::wasm_bindgen::JsValue::from(v as f64)).unwrap_or(worker::wasm_bindgen::JsValue::NULL),
+        commits_year.map(|v| worker::wasm_bindgen::JsValue::from(v as f64)).unwrap_or(worker::wasm_bindgen::JsValue::NULL),
+    ])?
+    .run()
+    .await?;
+    Ok(())
 }
 
 pub async fn channel_tin_names(d1: &D1Database) -> Result<Vec<String>> {

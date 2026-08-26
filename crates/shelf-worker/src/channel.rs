@@ -96,10 +96,92 @@ pub async fn sync(env: &Env) -> Result<String> {
         Ok(n) => n.to_string(),
         Err(e) => format!("ERROR: {e}"),
     };
+    let liveliness = match refresh_liveliness(env, &d1).await {
+        Ok(n) => n.to_string(),
+        Err(e) => format!("ERROR: {e}"),
+    };
 
     Ok(format!(
-        "mirrored {mirrored} channel packages, pruned {pruned}, enriched {enriched}"
+        "mirrored {mirrored} channel packages, pruned {pruned}, enriched {enriched}, liveliness {liveliness}"
     ))
+}
+
+/// Repos refreshed per sync: 2 GitHub calls each, sized to stay inside the
+/// Workers subrequest cap next to the mirror + enrichment fetches.
+const LIVELINESS_BATCH: usize = 10;
+
+async fn github_json<T: for<'de> serde::Deserialize<'de>>(
+    env: &Env,
+    url: &str,
+) -> Result<Option<T>> {
+    let mut headers = Headers::new();
+    headers.set("User-Agent", "mojoshelf-sync")?;
+    headers.set("Accept", "application/vnd.github+json")?;
+    if let Ok(token) = env.secret("GITHUB_TOKEN") {
+        headers.set("Authorization", &format!("Bearer {}", token.to_string()))?;
+    }
+    let mut init = RequestInit::new();
+    init.with_headers(headers);
+    let req = Request::new_with_init(url, &init)?;
+    let mut res = Fetch::Request(req).send().await?;
+    match res.status_code() {
+        200 => Ok(Some(res.json().await?)),
+        // 202: stats still computing; 403: rate limited; 404: repo gone.
+        _ => Ok(None),
+    }
+}
+
+fn owner_repo(url: &str) -> Option<String> {
+    let rest = url.split("github.com/").nth(1)?;
+    let mut parts = rest.trim_end_matches(".git").split('/');
+    let owner = parts.next()?;
+    let repo = parts.next()?;
+    if owner.is_empty() || repo.is_empty() {
+        return None;
+    }
+    Some(format!("{owner}/{repo}"))
+}
+
+/// Stars, last push, and commit counts (last month / last year) for the
+/// stalest GitHub-hosted tins. Rate-limit friendly: 403s just leave the
+/// batch for the next cycle; set GITHUB_TOKEN (worker secret) for 5000/hr.
+async fn refresh_liveliness(env: &Env, d1: &worker::D1Database) -> Result<usize> {
+    #[derive(Deserialize)]
+    struct Repo {
+        stargazers_count: i64,
+        pushed_at: String,
+    }
+    #[derive(Deserialize)]
+    struct Participation {
+        all: Vec<i64>,
+    }
+    let mut refreshed = 0usize;
+    for (name, url) in db::stale_liveliness_tins(d1, LIVELINESS_BATCH).await? {
+        let Some(or) = owner_repo(&url) else { continue };
+        let Some(repo) = github_json::<Repo>(env, &format!("https://api.github.com/repos/{or}")).await?
+        else {
+            continue;
+        };
+        // 52 weekly commit counts, newest last; one call covers both windows.
+        let (month, year) = match github_json::<Participation>(
+            env,
+            &format!("https://api.github.com/repos/{or}/stats/participation"),
+        )
+        .await?
+        {
+            Some(p) => {
+                let weeks = &p.all;
+                let month: i64 = weeks.iter().rev().take(4).sum();
+                let year: i64 = weeks.iter().sum();
+                (Some(month), Some(year))
+            }
+            None => (None, None),
+        };
+        db::set_liveliness(d1, &name, repo.stargazers_count, &repo.pushed_at, month, year)
+            .await?;
+        refreshed += 1;
+    }
+    Ok(refreshed)
 }
 
 const RECIPES_REPO: &str = "modular/modular-community";

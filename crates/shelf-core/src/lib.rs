@@ -16,6 +16,11 @@ pub struct TinSummary {
     /// binary package).
     #[serde(default = "default_kind")]
     pub kind: String,
+    #[serde(default)]
+    pub stars: Option<i64>,
+    /// ISO timestamp of the repo's last push (GitHub `pushed_at`).
+    #[serde(default)]
+    pub last_push: Option<String>,
 }
 
 pub fn default_kind() -> String {
@@ -50,6 +55,14 @@ pub struct TinDetail {
     /// For kind "channel": the latest version on the channel.
     #[serde(default)]
     pub channel_version: Option<String>,
+    #[serde(default)]
+    pub stars: Option<i64>,
+    #[serde(default)]
+    pub last_push: Option<String>,
+    #[serde(default)]
+    pub commits_month: Option<i64>,
+    #[serde(default)]
+    pub commits_year: Option<i64>,
 }
 
 /// One entry of the flat install set from `GET /api/tins/:name/resolve`.
