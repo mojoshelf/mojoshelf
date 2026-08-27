@@ -48,7 +48,8 @@ and `usage_example` tools over the same data.
 
 Tins have a `kind`: `source` (git-pinned, publishable) or `channel` —
 modular-community packages mirrored automatically (cron, six-hourly) with
-their latest channel version; they install as plain conda dependencies in
+their latest channel version (names differing only by `-` vs `_` are the
+same renamed package — only the variant with the newest version is kept); they install as plain conda dependencies in
 pixi mode, are rejected in submodule mode, and reserve their names against
 publishes.
 
