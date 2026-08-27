@@ -119,6 +119,12 @@ fn page(title: &str, active: &str, body: &str) -> String {
                   color: var(--danger-fg); border-radius: 4px; cursor: pointer; }}
   .token {{ background: var(--note-bg); border: 1px solid var(--note-border); padding: 1rem;
            border-radius: 6px; word-break: break-all; }}
+  .warn {{ background: var(--danger-bg); border: 1px solid var(--danger-border);
+          color: var(--danger-fg); padding: .6rem .8rem; border-radius: 6px; }}
+  .warn a {{ color: inherit; }}
+  .warn-tag {{ display: inline-block; background: var(--danger-bg); color: var(--danger-fg);
+              border: 1px solid var(--danger-border); border-radius: 10px;
+              padding: 0 .5rem; font-size: .8rem; margin: 0 .15rem .15rem 0; }}
   .pick-one {{ font-size: .85rem; font-weight: 400; color: var(--muted); }}
   .install-label {{ margin: .8rem 0 .25rem; font-size: .85rem; color: var(--muted); }}
   .install-label + pre {{ margin-top: 0; }}
@@ -199,6 +205,37 @@ fn activity_cell(stars: Option<i64>, last_push: Option<&str>) -> String {
     }
 }
 
+/// True while a tin's URL change is recent enough to warn about
+/// (shelf_core::URL_CHANGE_WARN_DAYS).
+fn url_recently_changed(changed_at: Option<&str>) -> bool {
+    changed_at
+        .map(|c| {
+            let now = (worker::js_sys::Date::now() / 1000.0) as i64;
+            shelf_core::url_change_is_recent(c, now)
+        })
+        .unwrap_or(false)
+}
+
+/// Repo-swap warning banner for a tin page; empty once the change is old.
+fn url_change_warning(url: &str, prev_url: Option<&str>, changed_at: Option<&str>) -> String {
+    if !url_recently_changed(changed_at) {
+        return String::new();
+    }
+    let changed = changed_at.unwrap_or_default();
+    let from = prev_url
+        .map(|p| format!(" (previously <a href=\"{}\">{}</a>)", esc(p), esc(&short_repo(p))))
+        .unwrap_or_default();
+    format!(
+        "<p class=\"warn\">⚠️ The git repository behind this tin changed on {} to \
+         <a href=\"{}\">{}</a>{}. Review the new repository before installing or \
+         updating.</p>",
+        esc(changed.get(..10).unwrap_or(changed)),
+        esc(url),
+        esc(&short_repo(url)),
+        from,
+    )
+}
+
 fn author_link(author: Option<&str>) -> String {
     match author {
         Some(a) => format!("<a href=\"/authors/{}\">{}</a>", esc(a), esc(a)),
@@ -234,10 +271,16 @@ fn tin_table(tins: &[TinSummary]) -> String {
             } else {
                 String::new()
             };
+            let repo_flag = if url_recently_changed(b.url_changed_at.as_deref()) {
+                " <span class=\"warn-tag\" title=\"the git repository behind this \
+                 tin recently changed\">⚠️ repo changed</span>"
+            } else {
+                ""
+            };
             format!(
                 "<tr><td><a href=\"/tins/{name}\"><code>{name}</code></a>{badge}</td>\
                  <td>{}</td><td>{}</td>\
-                 <td><a href=\"{}\">{}</a></td><td>{activity}</td><td>{}{}</td></tr>",
+                 <td><a href=\"{}\">{}</a>{repo_flag}</td><td>{activity}</td><td>{}{}</td></tr>",
                 b.latest_version.as_deref().map(esc).unwrap_or_else(|| "—".into()),
                 if b.kind == "channel" {
                     match b.author.as_deref() {
@@ -332,6 +375,7 @@ pub fn tin(d: &shelf_core::TinDetail) -> String {
             .unwrap_or_default();
         let body = format!(
             r#"<h1><code>{name}</code> <span class="tag">channel</span></h1>
+{warning}
 {desc}
 <p>A binary package from the
 <a href="/community-channel">modular-community channel</a> — latest version
@@ -355,6 +399,7 @@ so.</p>"#,
             desc = desc,
             maintainer = maintainer,
             liveliness = liveliness_line(d),
+            warning = url_change_warning(&d.url, d.prev_url.as_deref(), d.url_changed_at.as_deref()),
         );
         return page(&format!("Mojo Shelf — {}", d.name), "Tins", &body);
     }
@@ -432,6 +477,7 @@ shelf extension installed once:</p>
     };
     let body = format!(
         r#"<h1><code>{name}</code></h1>
+{warning}
 <p>{desc}</p>
 <p>by {author} — <a href="{url}">{url}</a></p>
 <p>{tags}</p>
@@ -451,6 +497,7 @@ shelf extension installed once:</p>
         url = esc(&d.url),
         depends_on = tin_link_list(&depends_on),
         dependents = tin_link_list(&d.dependents),
+        warning = url_change_warning(&d.url, d.prev_url.as_deref(), d.url_changed_at.as_deref()),
     );
     page(&format!("Mojo Shelf — {}", d.name), "Tins", &body)
 }

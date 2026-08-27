@@ -24,6 +24,8 @@ pub struct TinRow {
     pub last_push: Option<String>,
     pub commits_month: Option<i64>,
     pub commits_year: Option<i64>,
+    pub prev_url: Option<String>,
+    pub url_changed_at: Option<String>,
 }
 
 impl TinRow {
@@ -44,6 +46,7 @@ pub struct AuthorRow {
 const TIN_SELECT: &str = "SELECT b.id, b.name, b.url, b.description, b.author_id, b.tags, \
     b.kind, b.channel_version, b.channel_author, \
     b.stars, b.last_push, b.commits_month, b.commits_year, \
+    b.prev_url, b.url_changed_at, \
     a.github_login AS author FROM tins b LEFT JOIN authors a ON a.id = b.author_id";
 
 #[derive(Deserialize)]
@@ -136,6 +139,8 @@ pub async fn list_tins(d1: &D1Database, q: &str) -> Result<Vec<TinSummary>> {
                 kind: b.kind,
                 stars: b.stars,
                 last_push: b.last_push,
+                prev_url: b.prev_url,
+                url_changed_at: b.url_changed_at,
                 name: b.name,
                 url: b.url,
                 description: b.description,
@@ -180,6 +185,8 @@ pub async fn tin_detail(d1: &D1Database, name: &str) -> Result<Option<TinDetail>
         last_push: tin.last_push,
         commits_month: tin.commits_month,
         commits_year: tin.commits_year,
+        prev_url: tin.prev_url,
+        url_changed_at: tin.url_changed_at,
         name: tin.name,
         url: tin.url,
         description: tin.description,
@@ -283,7 +290,9 @@ pub async fn create_tin(
 }
 
 /// Sets/refreshes ownership, URL, and shelf.toml metadata when an author
-/// publishes.
+/// publishes. A URL that differs from the stored one is recorded in
+/// prev_url/url_changed_at so consumers can be warned about the repo swap
+/// (column references in SET read the pre-update row, so ordering is safe).
 pub async fn claim_tin(
     d1: &D1Database,
     tin_id: i64,
@@ -293,7 +302,11 @@ pub async fn claim_tin(
     tags: &str,
 ) -> Result<()> {
     d1.prepare(
-        "UPDATE tins SET url = ?2, author_id = ?3, description = ?4, tags = ?5, \
+        "UPDATE tins SET \
+         prev_url = CASE WHEN url != ?2 THEN url ELSE prev_url END, \
+         url_changed_at = CASE WHEN url != ?2 \
+             THEN strftime('%Y-%m-%dT%H:%M:%SZ', 'now') ELSE url_changed_at END, \
+         url = ?2, author_id = ?3, description = ?4, tags = ?5, \
          updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
     )
     .bind(&[
@@ -539,7 +552,11 @@ pub async fn delete_channel_tin(d1: &D1Database, name: &str) -> Result<()> {
 pub async fn upsert_tin(d1: &D1Database, name: &str, url: &str, description: &str) -> Result<()> {
     d1.prepare(
         "INSERT INTO tins (name, url, description) VALUES (?1, ?2, ?3) \
-         ON CONFLICT (name) DO UPDATE SET url = ?2, description = ?3, \
+         ON CONFLICT (name) DO UPDATE SET \
+         prev_url = CASE WHEN tins.url != ?2 THEN tins.url ELSE tins.prev_url END, \
+         url_changed_at = CASE WHEN tins.url != ?2 \
+             THEN strftime('%Y-%m-%dT%H:%M:%SZ', 'now') ELSE tins.url_changed_at END, \
+         url = ?2, description = ?3, \
          updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')",
     )
     .bind(&[name.into(), url.into(), description.into()])?

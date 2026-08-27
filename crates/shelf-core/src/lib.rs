@@ -21,6 +21,12 @@ pub struct TinSummary {
     /// ISO timestamp of the repo's last push (GitHub `pushed_at`).
     #[serde(default)]
     pub last_push: Option<String>,
+    /// The URL the tin pointed at before its most recent URL change.
+    #[serde(default)]
+    pub prev_url: Option<String>,
+    /// ISO timestamp of the most recent URL change (repo-swap warning).
+    #[serde(default)]
+    pub url_changed_at: Option<String>,
 }
 
 pub fn default_kind() -> String {
@@ -63,6 +69,12 @@ pub struct TinDetail {
     pub commits_month: Option<i64>,
     #[serde(default)]
     pub commits_year: Option<i64>,
+    /// The URL the tin pointed at before its most recent URL change.
+    #[serde(default)]
+    pub prev_url: Option<String>,
+    /// ISO timestamp of the most recent URL change (repo-swap warning).
+    #[serde(default)]
+    pub url_changed_at: Option<String>,
 }
 
 /// One entry of the flat install set from `GET /api/tins/:name/resolve`.
@@ -75,6 +87,12 @@ pub struct ResolvedTin {
     pub commit_sha: String,
     #[serde(default = "default_kind")]
     pub kind: String,
+    /// The URL the tin pointed at before its most recent URL change.
+    #[serde(default)]
+    pub prev_url: Option<String>,
+    /// ISO timestamp of the most recent URL change (repo-swap warning).
+    #[serde(default)]
+    pub url_changed_at: Option<String>,
 }
 
 /// Body of `POST /api/publish`. The first publish of a new name registers
@@ -136,6 +154,35 @@ pub fn is_full_sha(s: &str) -> bool {
     s.len() == 40 && s.chars().all(|c| c.is_ascii_hexdigit())
 }
 
+/// How long a repo-swap warning stays visible after a tin's URL changes.
+pub const URL_CHANGE_WARN_DAYS: i64 = 30;
+
+/// Unix seconds for a registry ISO-8601 UTC timestamp
+/// ("YYYY-MM-DDTHH:MM:SSZ"). Hand-rolled (days-from-civil) so both the
+/// wasm Worker and the native CLI share it without a date dependency.
+pub fn iso_to_unix_secs(iso: &str) -> Option<i64> {
+    let field = |range: std::ops::Range<usize>| iso.get(range)?.parse::<i64>().ok();
+    let (y, m, d) = (field(0..4)?, field(5..7)?, field(8..10)?);
+    let (hh, mm, ss) = (field(11..13)?, field(14..16)?, field(17..19)?);
+    if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+        return None;
+    }
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    Some(days * 86_400 + hh * 3_600 + mm * 60 + ss)
+}
+
+/// True while a URL change is recent enough to warrant a warning.
+pub fn url_change_is_recent(changed_at: &str, now_unix_secs: i64) -> bool {
+    iso_to_unix_secs(changed_at)
+        .map(|t| now_unix_secs - t < URL_CHANGE_WARN_DAYS * 86_400)
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -157,5 +204,24 @@ mod tests {
         assert!(is_full_sha(&"a".repeat(40)));
         assert!(!is_full_sha("abc123"));
         assert!(!is_full_sha(&"g".repeat(40)));
+    }
+
+    #[test]
+    fn iso_parse_known_values() {
+        assert_eq!(iso_to_unix_secs("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(iso_to_unix_secs("2000-03-01T00:00:00Z"), Some(951_868_800));
+        assert_eq!(iso_to_unix_secs("2026-08-26T12:30:05Z"), Some(1_787_747_405));
+        assert_eq!(iso_to_unix_secs("garbage"), None);
+        assert_eq!(iso_to_unix_secs(""), None);
+    }
+
+    #[test]
+    fn url_change_warning_expires_after_a_month() {
+        let changed = "2026-08-01T00:00:00Z";
+        let changed_secs = iso_to_unix_secs(changed).unwrap();
+        assert!(url_change_is_recent(changed, changed_secs));
+        assert!(url_change_is_recent(changed, changed_secs + 29 * 86_400));
+        assert!(!url_change_is_recent(changed, changed_secs + 30 * 86_400));
+        assert!(!url_change_is_recent("garbage", changed_secs));
     }
 }

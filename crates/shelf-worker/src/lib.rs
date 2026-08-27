@@ -157,6 +157,8 @@ async fn api_resolve(req: Request, ctx: RouteContext<()>) -> Result<Response> {
                 url: tin.url,
                 commit_sha: String::new(),
                 kind: "channel".into(),
+                prev_url: tin.prev_url,
+                url_changed_at: tin.url_changed_at,
             });
             continue;
         }
@@ -182,6 +184,8 @@ async fn api_resolve(req: Request, ctx: RouteContext<()>) -> Result<Response> {
             version: chosen.version.clone(),
             commit_sha: chosen.commit_sha.clone(),
             kind: "source".into(),
+            prev_url: tin.prev_url,
+            url_changed_at: tin.url_changed_at,
         });
     }
     Response::from_json(&out)

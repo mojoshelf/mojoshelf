@@ -140,9 +140,37 @@ fn split_spec(spec: &str) -> (&str, Option<&str>) {
     }
 }
 
+fn now_unix_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// Warns when a tin's git URL changed within the last month
+/// (shelf_core::URL_CHANGE_WARN_DAYS) — the repo behind the name may no
+/// longer be the one the consumer vetted.
+fn warn_recent_url_change(name: &str, url: &str, prev_url: Option<&str>, changed_at: Option<&str>) {
+    let Some(changed) = changed_at else { return };
+    if !shelf_core::url_change_is_recent(changed, now_unix_secs()) {
+        return;
+    }
+    let from = prev_url.map(|p| format!(" from {p}")).unwrap_or_default();
+    eprintln!(
+        "warning: the git repository behind '{name}' changed{from} to {url} on {}; \
+         review it before trusting the code",
+        changed.get(..10).unwrap_or(changed),
+    );
+}
+
 fn install_set(reg: &Registry, name: &str, version: Option<&str>) -> Result<Vec<ResolvedTin>> {
-    reg.resolve(name, version)
-        .with_context(|| format!("could not resolve '{name}'"))
+    let set = reg
+        .resolve(name, version)
+        .with_context(|| format!("could not resolve '{name}'"))?;
+    for tin in &set {
+        warn_recent_url_change(&tin.name, &tin.url, tin.prev_url.as_deref(), tin.url_changed_at.as_deref());
+    }
+    Ok(set)
 }
 
 fn install(root: &Path, tin: &ResolvedTin) -> Result<()> {
@@ -296,6 +324,7 @@ fn info(reg: &Registry, name: &str) -> Result<()> {
     let d = reg.info(name)?;
     println!("{}", d.name);
     println!("  url: {}", d.url);
+    warn_recent_url_change(&d.name, &d.url, d.prev_url.as_deref(), d.url_changed_at.as_deref());
     if let Some(author) = &d.author {
         println!("  author: {author}");
     }

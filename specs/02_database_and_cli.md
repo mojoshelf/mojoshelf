@@ -14,6 +14,13 @@
 | author_id   | INTEGER | FK -> authors; the owner          |
 | created_at  | TEXT    | ISO 8601                          |
 | updated_at  | TEXT    | ISO 8601                          |
+| prev_url    | TEXT    | url before the last URL change    |
+| url_changed_at | TEXT | ISO 8601; when url last changed   |
+
+A publish (or admin edit) that changes a tin's `url` records the old URL and
+the change time. For 30 days afterwards the site (tin page banner, index
+badge) and the CLI (`shelf add`/`update`/`info`) warn that the repo behind
+the name changed; the warning then expires automatically.
 
 ### authors
 
