@@ -51,6 +51,10 @@ jobs:
           - { tin: pontoneer, os: ubuntu-24.04-arm }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
+    # Matrix outputs collapse to the last writer — fine for a best-effort
+    # compiler version, since every job solves against the same nightly.
+    outputs:
+      compiler: ${{ steps.compiler.outputs.compiler }}
     steps:
       - name: Install pixi and the shelf extension
         run: |
@@ -77,3 +81,45 @@ jobs:
             pixi install
           fi
           echo "OK: ${{ matrix.tin }} builds on $P"
+      - name: Record the mojo-compiler version (best effort)
+        id: compiler
+        run: |
+          V=$(cd smoke && pixi list mojo-compiler 2>/dev/null \
+            | awk '$1 == "mojo-compiler" { print $2; exit }') || true
+          echo "compiler=$V" >> "$GITHUB_OUTPUT"
+
+  # Report each tin's outcome to the registry (shown on tin pages and in
+  # `shelf info`). Needs only the jobs API and the SHELF_TOKEN secret — no
+  # checkout, and it never runs third-party tin code.
+  report:
+    needs: [discover, smoke]
+    if: always() && needs.smoke.result != 'skipped'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - name: POST results to mojoshelf.org/api/verify
+        env:
+          SHELF_TOKEN: ${{ secrets.SHELF_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMPILER: ${{ needs.smoke.outputs.compiler }}
+        run: |
+          if [ -z "$SHELF_TOKEN" ]; then
+            echo "SHELF_TOKEN secret not set; skipping registry report"
+            exit 0
+          fi
+          JOBS=$(curl -sf -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100")
+          RESULTS=$(echo "$JOBS" | jq -c --arg c "$COMPILER" '
+            [.jobs[]
+             | select(.name | startswith("smoke ("))
+             | {tin: (.name | capture("^smoke \\((?<t>[^,)]+)").t),
+                ok: (.conclusion == "success")}]
+            | group_by(.tin)
+            | map({name: .[0].tin, ok: all(.[]; .ok)}
+                  + (if $c == "" then {} else {compiler: $c} end))')
+          echo "reporting: $RESULTS"
+          curl -sf -X POST "https://mojoshelf.org/api/verify" \
+            -H "Authorization: Bearer $SHELF_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"results\": $RESULTS}"

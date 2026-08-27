@@ -344,6 +344,18 @@ fn info(reg: &Registry, name: &str) -> Result<()> {
         };
         println!("  activity: {stars} stars; last push {push}{commits}");
     }
+    if let (Some(ok), Some(at)) = (d.verified_ok, d.verified_at.as_deref()) {
+        if ok {
+            let compiler = d
+                .verified_compiler
+                .as_deref()
+                .map(|c| format!(" with mojo-compiler {c}"))
+                .unwrap_or_default();
+            println!("  smoke test: consumer build passed{compiler} (checked {at})");
+        } else {
+            println!("  smoke test: consumer build FAILING (checked {at})");
+        }
+    }
     if d.kind == "channel" {
         println!(
             "  kind: modular-community channel package (latest {})",

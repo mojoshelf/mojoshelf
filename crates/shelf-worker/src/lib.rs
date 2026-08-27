@@ -7,6 +7,7 @@ mod authors;
 mod channel;
 mod db;
 mod html;
+mod mcp;
 
 use serde_json::json;
 use shelf_core::{is_full_sha, PublishRequest, ResolvedTin};
@@ -23,10 +24,17 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .get_async("/build-process", packaging)
         .get_async("/community-channel", community_channel)
         .get_async("/tins/:name", tin_page)
+        .get_async("/llms.txt", llms_txt)
+        .get_async("/llms-full.txt", llms_full)
+        .get_async("/mcp", mcp::get)
+        .post_async("/mcp", mcp::post)
+        .options_async("/mcp", mcp::options)
         .get_async("/api/tins", api_list)
         .get_async("/api/tins/:name", api_tin)
         .get_async("/api/tins/:name/resolve", api_resolve)
+        .get_async("/api/tins/:name/card", api_tin_card)
         .post_async("/api/publish", api_publish)
+        .post_async("/api/verify", api_verify)
         .post_async("/api/sync-channel", api_sync_channel)
         .get_async("/authors", authors::page)
         .get_async("/authors/:login", authors::author_page)
@@ -265,6 +273,119 @@ async fn api_publish(mut req: Request, ctx: RouteContext<()>) -> Result<Response
     }
     db::insert_version(&d1, tin.id, &body.version, &body.commit_sha, &dep_ids).await?;
     Ok(Response::from_json(&json!({ "ok": true }))?.with_status(201))
+}
+
+fn text_response(body: String, content_type: &str) -> Result<Response> {
+    let headers = Headers::new();
+    headers.set("Content-Type", content_type)?;
+    Ok(Response::ok(body)?.with_headers(headers))
+}
+
+/// llms.txt: a compact machine-readable index for agents and crawlers —
+/// what mojoshelf is, how to install, one line per tin.
+async fn llms_txt(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let tins = db::list_tins(&ctx.env.d1("DB")?, "").await?;
+    let mut out = String::from(
+        "# mojoshelf\n\n\
+         > An experimental community registry of reusable Mojo libraries (\"tins\"), \
+         installed as registry-pinned pixi git source dependencies or git submodules. \
+         Includes a read-only mirror of the modular-community conda channel (packages \
+         marked \"channel binary\"). Not affiliated with Modular.\n\n\
+         Install the CLI: `pixi global install --channel https://mojoshelf.org/channel mojoshelf`\n\
+         Then `pixi shelf add <name>` (pixi mode) or `shelf add <name>` (submodule mode).\n\n\
+         JSON API: `/api/tins?q=<term>` (search), `/api/tins/<name>` (detail), \
+         `/api/tins/<name>/resolve` (pinned install set). \
+         Markdown per tin: `/api/tins/<name>/card`.\n\
+         All tin cards in one file: https://mojoshelf.org/llms-full.txt\n\n\
+         ## Tins\n\n",
+    );
+    for t in &tins {
+        out.push_str(&format!(
+            "- [{name}](https://mojoshelf.org/tins/{name}): {desc}{badge}\n",
+            name = t.name,
+            desc = t.description.as_deref().unwrap_or("(no description yet)"),
+            badge = if t.kind == "channel" { " (channel binary)" } else { "" },
+        ));
+    }
+    text_response(out, "text/plain; charset=utf-8")
+}
+
+/// llms-full.txt: every tin card, separated by rules. Tins whose card the
+/// cron has not built yet get a minimal stub so the file is complete.
+async fn llms_full(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let rows = db::all_cards(&ctx.env.d1("DB")?).await?;
+    let mut out = String::from(
+        "# mojoshelf — all tin cards\n\n\
+         One markdown card per tin (source tins first, then modular-community \
+         channel mirrors). Index: https://mojoshelf.org/llms.txt\n",
+    );
+    for (name, description, url, card) in rows {
+        out.push_str("\n---\n\n");
+        match card {
+            Some(c) => out.push_str(&c),
+            None => out.push_str(&format!(
+                "# {name}\n\n{desc}\n\n- repository: {url}\n\
+                 - details: https://mojoshelf.org/tins/{name}\n",
+                desc = description.as_deref().unwrap_or("(no description yet)"),
+            )),
+        }
+    }
+    text_response(out, "text/markdown; charset=utf-8")
+}
+
+/// A tin's card: the stored one, or — while the cron hasn't reached the tin
+/// yet — a metadata-only card assembled on the fly (no repo fetches).
+/// None = no such tin. Shared by the REST card endpoint and the MCP tools.
+pub(crate) async fn card_markdown(d1: &D1Database, name: &str) -> Result<Option<String>> {
+    match db::card_of(d1, name).await? {
+        None => Ok(None),
+        Some(Some(card)) => Ok(Some(card)),
+        Some(None) => Ok(db::tin_detail(d1, name)
+            .await?
+            .map(|detail| shelf_core::cards::assemble_card(&detail, &Default::default()))),
+    }
+}
+
+async fn api_tin_card(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let name = ctx.param("name").expect("route param");
+    match card_markdown(&ctx.env.d1("DB")?, name).await? {
+        Some(card) => text_response(card, "text/markdown; charset=utf-8"),
+        None => error_json("tin not found", 404),
+    }
+}
+
+/// Body of POST /api/verify: tin-smoke build outcomes reported by CI.
+#[derive(serde::Deserialize)]
+struct VerifyBody {
+    results: Vec<VerifyResult>,
+}
+#[derive(serde::Deserialize)]
+struct VerifyResult {
+    name: String,
+    ok: bool,
+    #[serde(default)]
+    compiler: Option<String>,
+}
+
+async fn api_verify(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let d1 = ctx.env.d1("DB")?;
+    if authors::bearer_author(&req, &d1).await?.is_none() {
+        return error_json("publish token required", 401);
+    }
+    let Ok(body) = req.json::<VerifyBody>().await else {
+        return error_json("invalid JSON body; expected {\"results\": [{\"name\", \"ok\", \"compiler\"?}]}", 400);
+    };
+    let (mut updated, mut unknown) = (0usize, 0usize);
+    for r in &body.results {
+        match db::tin_by_name(&d1, &r.name).await? {
+            Some(_) => {
+                db::set_verified(&d1, &r.name, r.ok, r.compiler.as_deref()).await?;
+                updated += 1;
+            }
+            None => unknown += 1,
+        }
+    }
+    Response::from_json(&json!({ "ok": true, "updated": updated, "unknown": unknown }))
 }
 
 async fn admin_page(req: Request, ctx: RouteContext<()>) -> Result<Response> {

@@ -26,6 +26,9 @@ pub struct TinRow {
     pub commits_year: Option<i64>,
     pub prev_url: Option<String>,
     pub url_changed_at: Option<String>,
+    pub verified_at: Option<String>,
+    pub verified_ok: Option<i64>,
+    pub verified_compiler: Option<String>,
 }
 
 impl TinRow {
@@ -47,6 +50,7 @@ const TIN_SELECT: &str = "SELECT b.id, b.name, b.url, b.description, b.author_id
     b.kind, b.channel_version, b.channel_author, \
     b.stars, b.last_push, b.commits_month, b.commits_year, \
     b.prev_url, b.url_changed_at, \
+    b.verified_at, b.verified_ok, b.verified_compiler, \
     a.github_login AS author FROM tins b LEFT JOIN authors a ON a.id = b.author_id";
 
 #[derive(Deserialize)]
@@ -141,6 +145,9 @@ pub async fn list_tins(d1: &D1Database, q: &str) -> Result<Vec<TinSummary>> {
                 last_push: b.last_push,
                 prev_url: b.prev_url,
                 url_changed_at: b.url_changed_at,
+                verified_at: b.verified_at,
+                verified_ok: b.verified_ok.map(|v| v != 0),
+                verified_compiler: b.verified_compiler,
                 name: b.name,
                 url: b.url,
                 description: b.description,
@@ -187,6 +194,9 @@ pub async fn tin_detail(d1: &D1Database, name: &str) -> Result<Option<TinDetail>
         commits_year: tin.commits_year,
         prev_url: tin.prev_url,
         url_changed_at: tin.url_changed_at,
+        verified_at: tin.verified_at,
+        verified_ok: tin.verified_ok.map(|v| v != 0),
+        verified_compiler: tin.verified_compiler,
         name: tin.name,
         url: tin.url,
         description: tin.description,
@@ -560,6 +570,90 @@ pub async fn upsert_tin(d1: &D1Database, name: &str, url: &str, description: &st
          updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')",
     )
     .bind(&[name.into(), url.into(), description.into()])?
+    .run()
+    .await?;
+    Ok(())
+}
+
+/// Tins whose agent card is oldest (or never built), refreshed in batches
+/// by the sync cron like liveliness.
+pub async fn stale_card_tins(d1: &D1Database, limit: usize) -> Result<Vec<String>> {
+    #[derive(Deserialize)]
+    struct Row {
+        name: String,
+    }
+    let rows = d1
+        .prepare("SELECT name FROM tins ORDER BY card_at IS NOT NULL, card_at ASC LIMIT ?1")
+        .bind(&[JsValue::from(limit as f64)])?
+        .all()
+        .await?
+        .results::<Row>()?;
+    Ok(rows.into_iter().map(|r| r.name).collect())
+}
+
+pub async fn set_card(d1: &D1Database, name: &str, card: &str) -> Result<()> {
+    d1.prepare(
+        "UPDATE tins SET card = ?2, card_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') \
+         WHERE name = ?1",
+    )
+    .bind(&[name.into(), card.into()])?
+    .run()
+    .await?;
+    Ok(())
+}
+
+/// The stored card for one tin; outer None = no such tin, inner None = no
+/// card generated yet.
+pub async fn card_of(d1: &D1Database, name: &str) -> Result<Option<Option<String>>> {
+    #[derive(Deserialize)]
+    struct Row {
+        card: Option<String>,
+    }
+    Ok(d1
+        .prepare("SELECT card FROM tins WHERE name = ?1")
+        .bind(&[name.into()])?
+        .first::<Row>(None)
+        .await?
+        .map(|r| r.card))
+}
+
+/// (name, description, url, card) for every tin — source tins first — for
+/// /llms-full.txt.
+pub async fn all_cards(d1: &D1Database) -> Result<Vec<(String, Option<String>, String, Option<String>)>> {
+    #[derive(Deserialize)]
+    struct Row {
+        name: String,
+        description: Option<String>,
+        url: String,
+        card: Option<String>,
+    }
+    let rows = d1
+        .prepare("SELECT name, description, url, card FROM tins ORDER BY kind = 'channel', name")
+        .all()
+        .await?
+        .results::<Row>()?;
+    Ok(rows
+        .into_iter()
+        .map(|r| (r.name, r.description, r.url, r.card))
+        .collect())
+}
+
+/// Records one tin-smoke outcome reported by CI.
+pub async fn set_verified(
+    d1: &D1Database,
+    name: &str,
+    ok: bool,
+    compiler: Option<&str>,
+) -> Result<()> {
+    d1.prepare(
+        "UPDATE tins SET verified_ok = ?2, verified_compiler = ?3, \
+         verified_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE name = ?1",
+    )
+    .bind(&[
+        name.into(),
+        JsValue::from(if ok { 1.0 } else { 0.0 }),
+        compiler.map(JsValue::from).unwrap_or(JsValue::NULL),
+    ])?
     .run()
     .await?;
     Ok(())

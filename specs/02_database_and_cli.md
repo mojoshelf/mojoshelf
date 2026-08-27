@@ -16,11 +16,25 @@
 | updated_at  | TEXT    | ISO 8601                          |
 | prev_url    | TEXT    | url before the last URL change    |
 | url_changed_at | TEXT | ISO 8601; when url last changed   |
+| card        | TEXT    | precomputed agent card (markdown) |
+| card_at     | TEXT    | ISO 8601; when card was rebuilt   |
+| verified_at | TEXT    | ISO 8601; last tin-smoke report   |
+| verified_ok | INTEGER | 1 = smoke build passed everywhere |
+| verified_compiler | TEXT | mojo-compiler used (best effort) |
 
 A publish (or admin edit) that changes a tin's `url` records the old URL and
 the change time. For 30 days afterwards the site (tin page banner, index
 badge) and the CLI (`shelf add`/`update`/`info`) warn that the repo behind
 the name changed; the warning then expires automatically.
+
+For agents: the sync cron precomputes a markdown "card" per tin (import
+name vs package name, install commands, API surface, usage snippet, health)
+served at `/api/tins/<name>/card`, with `/llms.txt` (index) and
+`/llms-full.txt` (all cards). The weekly tin-smoke workflow POSTs per-tin
+build outcomes to `/api/verify` (publish-token gated), surfaced on tin
+pages, in `shelf info`, and in cards. An MCP server at `/mcp` (stateless
+streamable HTTP, anonymous, read-only) exposes `search_tins`, `tin_info`,
+and `usage_example` tools over the same data.
 
 ### authors
 

@@ -1,6 +1,6 @@
 ---
 name: mojoshelf-consume
-description: Install and use reusable Mojo libraries ("tins") from the mojoshelf registry (mojoshelf.org) as registry-pinned pixi source dependencies or git submodules. Use when a Mojo project needs a third-party library, when the user mentions mojoshelf or `shelf add`, or when building/running code that imports an installed tin.
+description: Discover, install, and use reusable Mojo libraries ("tins") from the mojoshelf registry (mojoshelf.org) as registry-pinned pixi source dependencies or git submodules. Use when asked what Mojo libraries/packages/modules exist for a task, whether there is a Mojo library for something, or to find one; when a Mojo project needs a third-party library; when the user mentions mojoshelf or `shelf add`; or when building/running code that imports an installed tin.
 license: MIT
 compatibility: Requires git and the shelf CLI (Rust); pixi recommended for the Mojo toolchain
 metadata:
@@ -40,6 +40,28 @@ pixi package (a `[package]` section in its pixi.toml). If a tin does not
 support this yet, fall back to submodule mode.
 
 **Submodule mode** (`shelf add <name>`): works for every tin; details below.
+
+## Discover tins without the CLI
+
+To answer "what Mojo libraries exist for X?" the registry's HTTP API needs
+no installation:
+
+```sh
+curl -s "https://mojoshelf.org/api/tins?q=<term>"   # search names/descriptions/tags (JSON)
+curl -s "https://mojoshelf.org/api/tins/<name>"     # versions, deps, health (JSON)
+curl -s "https://mojoshelf.org/api/tins/<name>/card" # markdown card: import name, API surface, usage
+curl -s "https://mojoshelf.org/llms-full.txt"       # every tin's card in one file
+```
+
+The card states the **Mojo import name**, which often differs from the tin
+name (tin `zlib-mojo` → `from zlib import …`) — don't guess imports. If
+nothing matches, say so rather than forcing a fit; the registry is small.
+
+The registry also runs an MCP server at `https://mojoshelf.org/mcp`
+(anonymous, read-only, streamable HTTP) with `search_tins`, `tin_info`, and
+`usage_example` tools. If those tools are available in your session, prefer
+them over curl. Users connect it in Claude Code with:
+`claude mcp add --transport http mojoshelf https://mojoshelf.org/mcp`.
 
 ## Find and install a tin
 

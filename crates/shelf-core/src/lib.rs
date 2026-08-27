@@ -1,5 +1,7 @@
 //! Types shared between the mojoshelf registry Worker and the `shelf` CLI.
 
+pub mod cards;
+
 use serde::{Deserialize, Serialize};
 
 /// A tin as listed by `GET /api/tins`.
@@ -27,6 +29,15 @@ pub struct TinSummary {
     /// ISO timestamp of the most recent URL change (repo-swap warning).
     #[serde(default)]
     pub url_changed_at: Option<String>,
+    /// ISO timestamp of the last tin-smoke consumer build check.
+    #[serde(default)]
+    pub verified_at: Option<String>,
+    /// Whether the last tin-smoke check passed on every platform.
+    #[serde(default)]
+    pub verified_ok: Option<bool>,
+    /// mojo-compiler version the last check built against (best effort).
+    #[serde(default)]
+    pub verified_compiler: Option<String>,
 }
 
 pub fn default_kind() -> String {
@@ -75,6 +86,15 @@ pub struct TinDetail {
     /// ISO timestamp of the most recent URL change (repo-swap warning).
     #[serde(default)]
     pub url_changed_at: Option<String>,
+    /// ISO timestamp of the last tin-smoke consumer build check.
+    #[serde(default)]
+    pub verified_at: Option<String>,
+    /// Whether the last tin-smoke check passed on every platform.
+    #[serde(default)]
+    pub verified_ok: Option<bool>,
+    /// mojo-compiler version the last check built against (best effort).
+    #[serde(default)]
+    pub verified_compiler: Option<String>,
 }
 
 /// One entry of the flat install set from `GET /api/tins/:name/resolve`.

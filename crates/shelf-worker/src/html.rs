@@ -358,6 +358,36 @@ fn liveliness_line(d: &shelf_core::TinDetail) -> String {
     )
 }
 
+/// "✓ consumer smoke build passed…" line from the weekly tin-smoke run.
+fn verification_line(d: &shelf_core::TinDetail) -> String {
+    let when = |at: &str| {
+        let a = age(at);
+        if a.is_empty() || a == "today" {
+            "today".to_string()
+        } else {
+            format!("{a} ago")
+        }
+    };
+    match (d.verified_ok, d.verified_at.as_deref()) {
+        (Some(true), Some(at)) => {
+            let compiler = d
+                .verified_compiler
+                .as_deref()
+                .map(|c| format!(" with mojo-compiler {}", esc(c)))
+                .unwrap_or_default();
+            format!(
+                "<p class=\"install-label\">✓ consumer smoke build passed{compiler} — checked {}</p>",
+                when(at)
+            )
+        }
+        (Some(false), Some(at)) => format!(
+            "<p class=\"install-label\">✗ consumer smoke build failing (checked {})</p>",
+            when(at)
+        ),
+        _ => String::new(),
+    }
+}
+
 pub fn tin(d: &shelf_core::TinDetail) -> String {
     if d.kind == "channel" {
         let maintainer = match d.author.as_deref() {
@@ -482,6 +512,7 @@ shelf extension installed once:</p>
 <p>by {author} — <a href="{url}">{url}</a></p>
 <p>{tags}</p>
 {liveliness}
+{verification}
 {graduated}
 {install}
 <h2>Depends on</h2>
@@ -498,6 +529,7 @@ shelf extension installed once:</p>
         depends_on = tin_link_list(&depends_on),
         dependents = tin_link_list(&d.dependents),
         warning = url_change_warning(&d.url, d.prev_url.as_deref(), d.url_changed_at.as_deref()),
+        verification = verification_line(d),
     );
     page(&format!("Mojo Shelf — {}", d.name), "Tins", &body)
 }
@@ -733,6 +765,21 @@ teaches your agent to consume tins, the other to publish them:</p>
 <pre><code>npx skills add mojoshelf/mojoshelf                                  # pick interactively
 npx skills add mojoshelf/mojoshelf --skill mojoshelf-consume --yes  # or one directly
 npx skills add mojoshelf/mojoshelf --skill mojoshelf-publish --yes</code></pre>
+<h2>Connect your agent (MCP)</h2>
+<p>The registry runs a
+<a href="https://modelcontextprotocol.io">Model Context Protocol</a> server at
+<code>https://mojoshelf.org/mcp</code> — anonymous, read-only, no API key.
+Connect it once and your agent gets three tools in every session:
+<code>search_tins</code> (find libraries by topic),
+<code>tin_info</code> (a tin's full card: Mojo import name, install commands,
+API surface, build health), and <code>usage_example</code> (install commands
+plus a copy-pasteable snippet). With Claude Code:</p>
+<pre><code>claude mcp add --transport http mojoshelf https://mojoshelf.org/mcp</code></pre>
+<p>Any other MCP-capable host (claude.ai, Cursor, VS Code, …) connects with
+the same URL. Agents without MCP can fetch
+<a href="/llms.txt">/llms.txt</a> (index) or
+<a href="/llms-full.txt">/llms-full.txt</a> (every tin's card), or use the
+JSON API (<code>/api/tins?q=…</code>).</p>
 <p>Want to publish your own tin? See the <a href="/authors">Authors</a> page.</p>"#;
     page("Mojo Shelf getting started", "Getting started", body)
 }

@@ -100,9 +100,14 @@ pub async fn sync(env: &Env) -> Result<String> {
         Ok(n) => n.to_string(),
         Err(e) => format!("ERROR: {e}"),
     };
+    let cards = match refresh_cards(env, &d1).await {
+        Ok(n) => n.to_string(),
+        Err(e) => format!("ERROR: {e}"),
+    };
 
     Ok(format!(
-        "mirrored {mirrored} channel packages, pruned {pruned}, enriched {enriched}, liveliness {liveliness}"
+        "mirrored {mirrored} channel packages, pruned {pruned}, enriched {enriched}, \
+         liveliness {liveliness}, cards {cards}"
     ))
 }
 
@@ -182,6 +187,100 @@ async fn refresh_liveliness(env: &Env, d1: &worker::D1Database) -> Result<usize>
         refreshed += 1;
     }
     Ok(refreshed)
+}
+
+/// Agent cards rebuilt per sync (oldest first, like liveliness). Each
+/// source tin costs up to ~9 fetches (tree + README + pixi.toml + a few
+/// source files); channel tins cost none.
+const CARD_BATCH: usize = 4;
+const CARD_SRC_FILES: usize = 6;
+
+/// Rebuilds the precomputed markdown card for the stalest tins.
+async fn refresh_cards(env: &Env, d1: &worker::D1Database) -> Result<usize> {
+    let mut built = 0usize;
+    for name in db::stale_card_tins(d1, CARD_BATCH).await? {
+        let Some(detail) = db::tin_detail(d1, &name).await? else {
+            continue;
+        };
+        let extras = if detail.kind == "channel" {
+            // Everything a channel card says is already in D1.
+            shelf_core::cards::CardExtras::default()
+        } else {
+            source_extras(env, &detail).await
+        };
+        let card = shelf_core::cards::assemble_card(&detail, &extras);
+        db::set_card(d1, &name, &card).await?;
+        built += 1;
+    }
+    Ok(built)
+}
+
+/// Repo-derived card extras for a source tin, read at the latest published
+/// commit (HEAD when nothing is published). Every failed fetch degrades to
+/// a metadata-only card instead of failing the sync.
+async fn source_extras(env: &Env, detail: &shelf_core::TinDetail) -> shelf_core::cards::CardExtras {
+    let mut extras = shelf_core::cards::CardExtras::default();
+    let Some(or) = owner_repo(&detail.url) else {
+        return extras;
+    };
+    let rev = detail
+        .versions
+        .first()
+        .map(|v| v.commit_sha.clone())
+        .unwrap_or_else(|| "HEAD".into());
+
+    #[derive(Deserialize)]
+    struct Tree {
+        tree: Vec<TreeEntry>,
+    }
+    #[derive(Deserialize)]
+    struct TreeEntry {
+        path: String,
+        #[serde(rename = "type")]
+        kind: String,
+    }
+    let tree_url = format!("https://api.github.com/repos/{or}/git/trees/{rev}?recursive=1");
+    let Ok(Some(tree)) = github_json::<Tree>(env, &tree_url).await else {
+        return extras;
+    };
+    let files: Vec<&str> = tree
+        .tree
+        .iter()
+        .filter(|e| e.kind == "blob")
+        .map(|e| e.path.as_str())
+        .collect();
+    let raw = |path: &str| format!("https://raw.githubusercontent.com/{or}/{rev}/{path}");
+
+    if let Some(readme) = files
+        .iter()
+        .find(|p| p.eq_ignore_ascii_case("readme.md") || p.eq_ignore_ascii_case("readme"))
+    {
+        if let Ok(Some(text)) = fetch_text(&raw(readme)).await {
+            extras.snippet = shelf_core::cards::extract_snippet(&text);
+        }
+    }
+    if files.iter().any(|p| *p == "pixi.toml") {
+        if let Ok(Some(text)) = fetch_text(&raw("pixi.toml")).await {
+            extras.import_name = shelf_core::cards::pixi_import_name(&text);
+        }
+    }
+    let mut mojo: Vec<&str> = files
+        .iter()
+        .filter(|p| p.starts_with("src/") && p.ends_with(".mojo") && !p.contains("test"))
+        .copied()
+        .collect();
+    // Shallow paths first: package roots and __init__ re-exports beat deep
+    // internals when only a few files fit the budget.
+    mojo.sort_by_key(|p| (p.matches('/').count(), p.to_string()));
+    for path in mojo.into_iter().take(CARD_SRC_FILES) {
+        if let Ok(Some(text)) = fetch_text(&raw(path)).await {
+            let sigs = shelf_core::cards::extract_signatures(&text);
+            if !sigs.is_empty() {
+                extras.api.push((path.to_string(), sigs));
+            }
+        }
+    }
+    extras
 }
 
 const RECIPES_REPO: &str = "modular/modular-community";
