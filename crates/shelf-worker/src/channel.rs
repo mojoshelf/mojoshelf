@@ -33,6 +33,72 @@ fn newer(a: &str, b: &str) -> bool {
     }
 }
 
+/// The channel keeps artifacts of packages that were later renamed (e.g.
+/// small-time → small_time), so both spellings show up in repodata. Names
+/// that differ only by `-` vs `_` are the same library: keep the variant
+/// whose latest version is newest (the rename is where releases continue),
+/// preferring `_` on a tie, and drop the other so the prune pass below
+/// removes its tin.
+fn dedupe_renamed(latest: &mut HashMap<String, String>) {
+    let mut keep: HashMap<String, String> = HashMap::new();
+    for (name, version) in latest.iter() {
+        let norm = name.replace('-', "_");
+        let wins = match keep.get(&norm) {
+            None => true,
+            Some(other) => {
+                let other_version = &latest[other];
+                newer(version, other_version)
+                    || (version == other_version && name.contains('_'))
+            }
+        };
+        if wins {
+            keep.insert(norm, name.clone());
+        }
+    }
+    latest.retain(|name, _| keep.get(&name.replace('-', "_")) == Some(name));
+}
+
+#[cfg(test)]
+mod dedupe_tests {
+    use super::*;
+
+    fn map(entries: &[(&str, &str)]) -> HashMap<String, String> {
+        entries.iter().map(|(n, v)| (n.to_string(), v.to_string())).collect()
+    }
+
+    #[test]
+    fn renamed_package_keeps_newer_variant() {
+        let mut latest = map(&[("small-time", "0.0.1"), ("small_time", "26.2.0"), ("other", "1.0.0")]);
+        dedupe_renamed(&mut latest);
+        assert!(latest.contains_key("small_time"));
+        assert!(!latest.contains_key("small-time"));
+        assert!(latest.contains_key("other"));
+    }
+
+    #[test]
+    fn rename_in_other_direction_also_wins() {
+        let mut latest = map(&[("ember_lib", "2.0.0"), ("ember-lib", "3.1.0")]);
+        dedupe_renamed(&mut latest);
+        assert!(latest.contains_key("ember-lib"));
+        assert!(!latest.contains_key("ember_lib"));
+    }
+
+    #[test]
+    fn tie_prefers_underscore() {
+        let mut latest = map(&[("a-b", "1.0.0"), ("a_b", "1.0.0")]);
+        dedupe_renamed(&mut latest);
+        assert!(latest.contains_key("a_b"));
+        assert!(!latest.contains_key("a-b"));
+    }
+
+    #[test]
+    fn distinct_names_untouched() {
+        let mut latest = map(&[("csv-mojo", "1.0.0"), ("zlib_mojo", "2.0.0")]);
+        dedupe_renamed(&mut latest);
+        assert_eq!(latest.len(), 2);
+    }
+}
+
 pub async fn sync(env: &Env) -> Result<String> {
     let mut latest: HashMap<String, String> = HashMap::new();
     for subdir in SUBDIRS {
@@ -57,6 +123,7 @@ pub async fn sync(env: &Env) -> Result<String> {
     if latest.is_empty() {
         return Err(Error::RustError("channel repodata yielded no packages".into()));
     }
+    dedupe_renamed(&mut latest);
 
     let d1 = env.d1("DB")?;
     let mut mirrored = 0usize;
