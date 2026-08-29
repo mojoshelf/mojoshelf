@@ -46,7 +46,8 @@ window.addEventListener('DOMContentLoaded', function () {{
     api_host: 'https://mojoshelf.org/ph',
     ui_host: 'https://us.posthog.com',
     defaults: '2025-05-24',
-    persistence: 'memory'
+    persistence: 'memory',
+    capture_exceptions: true
   }});
 }});
 </script>"#

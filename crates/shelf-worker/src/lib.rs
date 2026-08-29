@@ -8,8 +8,10 @@ mod badge;
 mod channel;
 mod db;
 mod html;
+mod located;
 mod mcp;
 
+use crate::located::{split as split_location, Located};
 use serde_json::json;
 use shelf_core::{is_full_sha, PublishRequest, ResolvedTin};
 use std::collections::{HashSet, VecDeque};
@@ -18,6 +20,8 @@ use worker::*;
 #[event(fetch)]
 pub async fn main(req: Request, env: Env, ctx: Context) -> Result<Response> {
     let tracked = server_event(&req).await;
+    // Kept for the exception below: the router consumes `req`.
+    let route = format!("{} {}", String::from(req.method()), req.path());
     let resp = Router::new()
         .get_async("/", home)
         .get_async("/getting-started", getting_started)
@@ -58,7 +62,26 @@ pub async fn main(req: Request, env: Env, ctx: Context) -> Result<Response> {
         .get_async("/admin", admin_page)
         .post_async("/admin/tins", admin_upsert)
         .run(req, env)
-        .await?;
+        .await;
+    // Every handler returns `Result<Response>`, so a bubbled-up `Err` is the
+    // one place an unhandled failure turns into a 500. Report it before
+    // propagating, which the `?` here used to skip.
+    let resp = match resp {
+        Ok(resp) => resp,
+        Err(e) => {
+            // `.at()` recorded where the `?` failed; take it back off so the
+            // location is reported to PostHog but never reaches the client.
+            let raw = e.to_string();
+            let (message, location) = split_location(&raw);
+            ctx.wait_until(posthog_exception(
+                "WorkerError",
+                message.to_string(),
+                location.map(str::to_string),
+                json!({ "route": route }),
+            ));
+            return Err(Error::RustError(message.to_string()));
+        }
+    };
     if let Some((event, distinct_id, mut props)) = tracked {
         props["status"] = json!(resp.status_code());
         ctx.wait_until(posthog_capture(event, distinct_id, props));
@@ -122,11 +145,76 @@ async fn posthog_capture(event: &'static str, distinct_id: String, properties: s
     }
 }
 
+/// Reports a Rust error to PostHog Error Tracking as an `$exception` event.
+///
+/// There is no stack trace: this is a wasm Worker, so the frames the Rust SDK
+/// would walk (via `backtrace`/`findshlibs`) do not exist. `kind` is therefore
+/// what issues group by — keep it coarse and stable — and `context` carries
+/// the locator, such as the route that failed.
+async fn posthog_exception(
+    kind: &'static str,
+    message: String,
+    location: Option<String>,
+    context: serde_json::Value,
+) {
+    // One frame, from `#[track_caller]` rather than an unwinder, so it is
+    // already resolved: PostHog symbolicates nothing and shows it as-is.
+    let stacktrace = location.as_deref().and_then(|loc| {
+        let (file, line) = loc.rsplit_once(':')?;
+        json!({
+            "type": "raw",
+            "frames": [{
+                "filename": file,
+                "lineno": line.parse::<u32>().ok()?,
+                "function": "",
+                "lang": "rust",
+                "platform": "native",
+                "in_app": true,
+                "synthetic": false,
+                "client_resolved": true,
+            }],
+        })
+        .into()
+    });
+    let mut props = json!({
+        "$process_person_profile": false,
+        "$exception_level": "error",
+        "$exception_list": [{
+            "type": kind,
+            "value": message,
+            "mechanism": { "type": "generic", "handled": false, "synthetic": stacktrace.is_none() },
+            "stacktrace": stacktrace,
+        }],
+        "runtime": "cloudflare-workers",
+    });
+    if let (serde_json::Value::Object(props), serde_json::Value::Object(extra)) =
+        (&mut props, context)
+    {
+        props.extend(extra);
+    }
+    // Personless, so the id only has to be unique per report.
+    let distinct_id = format!("worker-{}", auth::sha256_hex(&Date::now().as_millis().to_string()));
+    posthog_capture("$exception", distinct_id, props).await;
+}
+
 #[event(scheduled)]
 pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
     match channel::sync(&env).await {
         Ok(msg) => console_log!("channel sync: {msg}"),
-        Err(e) => console_log!("channel sync FAILED: {e}"),
+        Err(e) => {
+            console_log!("channel sync FAILED: {e}");
+            // The cron has no response to fail, so a broken mirror sync is
+            // otherwise invisible outside the logs.
+            let raw = e.to_string();
+            let (message, location) = split_location(&raw);
+            posthog_exception(
+                "ChannelSyncError",
+                message.to_string(),
+                location.map(str::to_string),
+                json!({ "job": "channel-sync" }),
+            )
+            .await;
+        }
     }
 }
 
@@ -147,7 +235,7 @@ async fn badge_nightly_svg(_req: Request, ctx: RouteContext<()>) -> Result<Respo
 
 async fn serve_badge(ctx: &RouteContext<()>, name: &str, nightly: bool) -> Result<Response> {
     let d1 = ctx.env.d1("DB")?;
-    let Some(tin) = db::tin_by_name(&d1, name).await? else {
+    let Some(tin) = db::tin_by_name(&d1, name).await.at()? else {
         return Ok(Response::error("unknown tin", 404)?);
     };
     let (label, (message, color)) = if nightly {
@@ -176,7 +264,7 @@ async fn api_tin_badge(req: Request, ctx: RouteContext<()>) -> Result<Response> 
         .query_pairs()
         .any(|(k, v)| k == "channel" && v == "nightly");
     let d1 = ctx.env.d1("DB")?;
-    let Some(tin) = db::tin_by_name(&d1, &name).await? else {
+    let Some(tin) = db::tin_by_name(&d1, &name).await.at()? else {
         return error_json("tin not found", 404);
     };
     let (label, (message, color)) = if nightly {
@@ -221,7 +309,7 @@ async fn posthog_proxy(mut req: Request, ctx: RouteContext<()>) -> Result<Respon
     let mut init = RequestInit::new();
     init.with_method(req.method()).with_headers(headers);
     if !matches!(req.method(), Method::Get | Method::Head) {
-        let body = req.bytes().await?;
+        let body = req.bytes().await.at()?;
         init.with_body(Some(js_sys::Uint8Array::from(body.as_slice()).into()));
     }
     Fetch::Request(Request::new_with_init(&target, &init)?)
@@ -232,10 +320,10 @@ async fn posthog_proxy(mut req: Request, ctx: RouteContext<()>) -> Result<Respon
 /// Manual channel sync, gated by any valid publish token (idempotent).
 async fn api_sync_channel(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let d1 = ctx.env.d1("DB")?;
-    if authors::bearer_author(&req, &d1).await?.is_none() {
+    if authors::bearer_author(&req, &d1).await.at()?.is_none() {
         return error_json("publish token required", 401);
     }
-    let msg = channel::sync(&ctx.env).await?;
+    let msg = channel::sync(&ctx.env).await.at()?;
     Response::from_json(&json!({ "ok": true, "result": msg }))
 }
 
@@ -263,7 +351,7 @@ fn query_param(req: &Request, key: &str) -> Option<String> {
 
 async fn home(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let q = query_param(&req, "q").unwrap_or_default();
-    let tins = db::list_tins(&ctx.env.d1("DB")?, &q).await?;
+    let tins = db::list_tins(&ctx.env.d1("DB")?, &q).await.at()?;
     Response::from_html(html::home(&tins, &q))
 }
 
@@ -285,7 +373,7 @@ async fn community_channel(_req: Request, _ctx: RouteContext<()>) -> Result<Resp
 
 async fn tin_page(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let name = ctx.param("name").expect("route param");
-    match db::tin_detail(&ctx.env.d1("DB")?, name).await? {
+    match db::tin_detail(&ctx.env.d1("DB")?, name).await.at()? {
         Some(detail) => Response::from_html(html::tin(&detail)),
         None => Response::error("tin not found", 404),
     }
@@ -293,13 +381,13 @@ async fn tin_page(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
 
 async fn api_list(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let q = query_param(&req, "q").unwrap_or_default();
-    let tins = db::list_tins(&ctx.env.d1("DB")?, &q).await?;
+    let tins = db::list_tins(&ctx.env.d1("DB")?, &q).await.at()?;
     Response::from_json(&tins)
 }
 
 async fn api_tin(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let name = ctx.param("name").expect("route param");
-    match db::tin_detail(&ctx.env.d1("DB")?, name).await? {
+    match db::tin_detail(&ctx.env.d1("DB")?, name).await.at()? {
         Some(detail) => Response::from_json(&detail),
         None => error_json("tin not found", 404),
     }
@@ -321,7 +409,7 @@ async fn api_resolve(req: Request, ctx: RouteContext<()>) -> Result<Response> {
         if !visited.insert(tin_name.clone()) {
             continue;
         }
-        let Some(tin) = db::tin_by_name(&d1, &tin_name).await? else {
+        let Some(tin) = db::tin_by_name(&d1, &tin_name).await.at()? else {
             return error_json(&format!("tin '{tin_name}' not found"), 404);
         };
         if tin.kind == "channel" {
@@ -338,7 +426,7 @@ async fn api_resolve(req: Request, ctx: RouteContext<()>) -> Result<Response> {
             });
             continue;
         }
-        let versions = db::versions_of(&d1, tin.id).await?;
+        let versions = db::versions_of(&d1, tin.id).await.at()?;
         let chosen = match &want {
             Some(v) => versions.iter().find(|row| &row.version == v),
             None => shelf_core::latest_version(versions.iter().map(|r| r.version.as_str()))
@@ -351,7 +439,7 @@ async fn api_resolve(req: Request, ctx: RouteContext<()>) -> Result<Response> {
             };
             return error_json(&msg, 404);
         };
-        for dep in db::dependency_names(&d1, chosen.id).await? {
+        for dep in db::dependency_names(&d1, chosen.id).await.at()? {
             queue.push_back((dep, None));
         }
         out.push(ResolvedTin {
@@ -369,7 +457,7 @@ async fn api_resolve(req: Request, ctx: RouteContext<()>) -> Result<Response> {
 
 async fn api_publish(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let d1 = ctx.env.d1("DB")?;
-    let Some(author) = authors::bearer_author(&req, &d1).await? else {
+    let Some(author) = authors::bearer_author(&req, &d1).await.at()? else {
         return error_json(
             "invalid or missing publish token; get one at https://mojoshelf.org/authors",
             401,
@@ -395,7 +483,7 @@ async fn api_publish(mut req: Request, ctx: RouteContext<()>) -> Result<Response
 
     let description = body.description.as_deref().map(str::trim).filter(|d| !d.is_empty());
     let tags = shelf_core::split_tags(&body.tags.join(",")).join(",");
-    let tin = match db::tin_by_name(&d1, &body.name).await? {
+    let tin = match db::tin_by_name(&d1, &body.name).await.at()? {
         Some(existing) => {
             if existing.kind == "channel" {
                 return error_json(
@@ -413,17 +501,17 @@ async fn api_publish(mut req: Request, ctx: RouteContext<()>) -> Result<Response
                     403,
                 );
             }
-            db::claim_tin(&d1, existing.id, &body.url, author.id, description, &tags).await?;
+            db::claim_tin(&d1, existing.id, &body.url, author.id, description, &tags).await.at()?;
             existing
         }
         None => {
-            db::create_tin(&d1, &body.name, &body.url, author.id, description, &tags).await?;
+            db::create_tin(&d1, &body.name, &body.url, author.id, description, &tags).await.at()?;
             db::tin_by_name(&d1, &body.name)
-                .await?
+                .await.at()?
                 .ok_or_else(|| worker::Error::RustError("tin vanished after insert".into()))?
         }
     };
-    let versions = db::versions_of(&d1, tin.id).await?;
+    let versions = db::versions_of(&d1, tin.id).await.at()?;
     if versions.iter().any(|v| v.version == body.version) {
         return error_json(
             &format!("version {} of '{}' is already published", body.version, body.name),
@@ -432,14 +520,14 @@ async fn api_publish(mut req: Request, ctx: RouteContext<()>) -> Result<Response
     }
     let mut dep_ids = Vec::new();
     for dep in &body.dependencies {
-        match db::tin_by_name(&d1, dep).await? {
+        match db::tin_by_name(&d1, dep).await.at()? {
             Some(b) => dep_ids.push(b.id),
             None => {
                 return error_json(&format!("dependency '{dep}' is not a registered tin"), 400)
             }
         }
     }
-    db::insert_version(&d1, tin.id, &body.version, &body.commit_sha, &dep_ids).await?;
+    db::insert_version(&d1, tin.id, &body.version, &body.commit_sha, &dep_ids).await.at()?;
     Ok(Response::from_json(&json!({ "ok": true }))?.with_status(201))
 }
 
@@ -452,7 +540,7 @@ fn text_response(body: String, content_type: &str) -> Result<Response> {
 /// llms.txt: a compact machine-readable index for agents and crawlers —
 /// what mojoshelf is, how to install, one line per tin.
 async fn llms_txt(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let tins = db::list_tins(&ctx.env.d1("DB")?, "").await?;
+    let tins = db::list_tins(&ctx.env.d1("DB")?, "").await.at()?;
     let mut out = String::from(
         "# mojoshelf\n\n\
          > An experimental community registry of reusable Mojo libraries (\"tins\"), \
@@ -481,7 +569,7 @@ async fn llms_txt(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
 /// llms-full.txt: every tin card, separated by rules. Tins whose card the
 /// cron has not built yet get a minimal stub so the file is complete.
 async fn llms_full(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let rows = db::all_cards(&ctx.env.d1("DB")?).await?;
+    let rows = db::all_cards(&ctx.env.d1("DB")?).await.at()?;
     let mut out = String::from(
         "# mojoshelf — all tin cards\n\n\
          One markdown card per tin (source tins first, then modular-community \
@@ -505,18 +593,18 @@ async fn llms_full(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
 /// yet — a metadata-only card assembled on the fly (no repo fetches).
 /// None = no such tin. Shared by the REST card endpoint and the MCP tools.
 pub(crate) async fn card_markdown(d1: &D1Database, name: &str) -> Result<Option<String>> {
-    match db::card_of(d1, name).await? {
+    match db::card_of(d1, name).await.at()? {
         None => Ok(None),
         Some(Some(card)) => Ok(Some(card)),
         Some(None) => Ok(db::tin_detail(d1, name)
-            .await?
+            .await.at()?
             .map(|detail| shelf_core::cards::assemble_card(&detail, &Default::default()))),
     }
 }
 
 async fn api_tin_card(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let name = ctx.param("name").expect("route param");
-    match card_markdown(&ctx.env.d1("DB")?, name).await? {
+    match card_markdown(&ctx.env.d1("DB")?, name).await.at()? {
         Some(card) => text_response(card, "text/markdown; charset=utf-8"),
         None => error_json("tin not found", 404),
     }
@@ -541,7 +629,7 @@ struct VerifyResult {
 
 async fn api_verify(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let d1 = ctx.env.d1("DB")?;
-    if authors::bearer_author(&req, &d1).await?.is_none() {
+    if authors::bearer_author(&req, &d1).await.at()?.is_none() {
         return error_json("publish token required", 401);
     }
     let Ok(body) = req.json::<VerifyBody>().await else {
@@ -549,10 +637,10 @@ async fn api_verify(mut req: Request, ctx: RouteContext<()>) -> Result<Response>
     };
     let (mut updated, mut unknown) = (0usize, 0usize);
     for r in &body.results {
-        match db::tin_by_name(&d1, &r.name).await? {
+        match db::tin_by_name(&d1, &r.name).await.at()? {
             Some(_) => {
                 let nightly = r.channel.as_deref() == Some("nightly");
-                db::set_verified(&d1, &r.name, r.ok, r.compiler.as_deref(), nightly).await?;
+                db::set_verified(&d1, &r.name, r.ok, r.compiler.as_deref(), nightly).await.at()?;
                 updated += 1;
             }
             None => unknown += 1,
@@ -571,7 +659,7 @@ async fn admin_page(req: Request, ctx: RouteContext<()>) -> Result<Response> {
         .ok()
         .flatten()
         .unwrap_or_else(|| "unknown".into());
-    let tins = db::list_tins(&ctx.env.d1("DB")?, "").await?;
+    let tins = db::list_tins(&ctx.env.d1("DB")?, "").await.at()?;
     Response::from_html(html::admin(&tins, &email))
 }
 
@@ -579,7 +667,7 @@ async fn admin_upsert(mut req: Request, ctx: RouteContext<()>) -> Result<Respons
     if let Some(denied) = require_access(&req) {
         return denied;
     }
-    let form = req.form_data().await?;
+    let form = req.form_data().await.at()?;
     let field = |key: &str| match form.get(key) {
         Some(FormEntry::Field(v)) => v.trim().to_string(),
         _ => String::new(),
@@ -588,7 +676,7 @@ async fn admin_upsert(mut req: Request, ctx: RouteContext<()>) -> Result<Respons
     if name.is_empty() || url.is_empty() {
         return error_json("name and url are required", 400);
     }
-    db::upsert_tin(&ctx.env.d1("DB")?, &name, &url, &description).await?;
+    db::upsert_tin(&ctx.env.d1("DB")?, &name, &url, &description).await.at()?;
     let mut back = req.url()?;
     back.set_path("/admin");
     back.set_query(None);

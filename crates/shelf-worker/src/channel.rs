@@ -6,6 +6,7 @@
 use crate::db;
 use serde::Deserialize;
 use std::collections::HashMap;
+use crate::located::Located;
 use worker::*;
 
 const CHANNEL_BASE: &str = "https://repo.prefix.dev/modular-community";
@@ -105,12 +106,12 @@ pub async fn sync(env: &Env) -> Result<String> {
         let url = format!("{CHANNEL_BASE}/{subdir}/repodata.json");
         let mut res = Fetch::Url(url.parse().map_err(|_| Error::RustError("bad url".into()))?)
             .send()
-            .await?;
+            .await.at()?;
         if res.status_code() != 200 {
             // Missing subdir is fine; anything else we note and continue.
             continue;
         }
-        let data: RepoData = res.json().await?;
+        let data: RepoData = res.json().await.at()?;
         for entry in data.packages.values().chain(data.packages_conda.values()) {
             match latest.get(&entry.name) {
                 Some(v) if !newer(&entry.version, v) => {}
@@ -130,32 +131,32 @@ pub async fn sync(env: &Env) -> Result<String> {
     for (name, version) in &latest {
         // Source tins own their names — but record that the channel now
         // serves the same name (a graduated tin), so divergence is visible.
-        if let Some(existing) = db::tin_by_name(&d1, name).await? {
+        if let Some(existing) = db::tin_by_name(&d1, name).await.at()? {
             if existing.kind != "channel" {
                 if existing.channel_version.as_deref() != Some(version.as_str()) {
-                    db::set_source_channel_version(&d1, name, Some(version)).await?;
+                    db::set_source_channel_version(&d1, name, Some(version)).await.at()?;
                 }
                 continue;
             }
         }
         let url = format!("https://prefix.dev/channels/modular-community/packages/{name}");
-        db::upsert_channel_tin(&d1, name, &url, version).await?;
+        db::upsert_channel_tin(&d1, name, &url, version).await.at()?;
         mirrored += 1;
     }
 
     // Prune channel tins that left the channel.
     let mut pruned = 0usize;
-    for name in db::channel_tin_names(&d1).await? {
+    for name in db::channel_tin_names(&d1).await.at()? {
         if !latest.contains_key(&name) {
-            db::delete_channel_tin(&d1, &name).await?;
+            db::delete_channel_tin(&d1, &name).await.at()?;
             pruned += 1;
         }
     }
 
     // Graduated tins whose channel package disappeared: clear the marker.
-    for name in db::graduated_source_tin_names(&d1).await? {
+    for name in db::graduated_source_tin_names(&d1).await.at()? {
         if !latest.contains_key(&name) {
-            db::set_source_channel_version(&d1, &name, None).await?;
+            db::set_source_channel_version(&d1, &name, None).await.at()?;
         }
     }
 
@@ -195,9 +196,9 @@ async fn github_json<T: for<'de> serde::Deserialize<'de>>(
     let mut init = RequestInit::new();
     init.with_headers(headers);
     let req = Request::new_with_init(url, &init)?;
-    let mut res = Fetch::Request(req).send().await?;
+    let mut res = Fetch::Request(req).send().await.at()?;
     match res.status_code() {
-        200 => Ok(Some(res.json().await?)),
+        200 => Ok(Some(res.json().await.at()?)),
         // 202: stats still computing; 403: rate limited; 404: repo gone.
         _ => Ok(None),
     }
@@ -228,9 +229,10 @@ async fn refresh_liveliness(env: &Env, d1: &worker::D1Database) -> Result<usize>
         all: Vec<i64>,
     }
     let mut refreshed = 0usize;
-    for (name, url) in db::stale_liveliness_tins(d1, LIVELINESS_BATCH).await? {
+    for (name, url) in db::stale_liveliness_tins(d1, LIVELINESS_BATCH).await.at()? {
         let Some(or) = owner_repo(&url) else { continue };
-        let Some(repo) = github_json::<Repo>(env, &format!("https://api.github.com/repos/{or}")).await?
+        let url = format!("https://api.github.com/repos/{or}");
+        let Some(repo) = github_json::<Repo>(env, &url).await.at()?
         else {
             continue;
         };
@@ -239,7 +241,7 @@ async fn refresh_liveliness(env: &Env, d1: &worker::D1Database) -> Result<usize>
             env,
             &format!("https://api.github.com/repos/{or}/stats/participation"),
         )
-        .await?
+        .await.at()?
         {
             Some(p) => {
                 let weeks = &p.all;
@@ -250,7 +252,7 @@ async fn refresh_liveliness(env: &Env, d1: &worker::D1Database) -> Result<usize>
             None => (None, None),
         };
         db::set_liveliness(d1, &name, repo.stargazers_count, &repo.pushed_at, month, year)
-            .await?;
+            .await.at()?;
         refreshed += 1;
     }
     Ok(refreshed)
@@ -265,8 +267,8 @@ const CARD_SRC_FILES: usize = 6;
 /// Rebuilds the precomputed markdown card for the stalest tins.
 async fn refresh_cards(env: &Env, d1: &worker::D1Database) -> Result<usize> {
     let mut built = 0usize;
-    for name in db::stale_card_tins(d1, CARD_BATCH).await? {
-        let Some(detail) = db::tin_detail(d1, &name).await? else {
+    for name in db::stale_card_tins(d1, CARD_BATCH).await.at()? {
+        let Some(detail) = db::tin_detail(d1, &name).await.at()? else {
             continue;
         };
         let extras = if detail.kind == "channel" {
@@ -276,7 +278,7 @@ async fn refresh_cards(env: &Env, d1: &worker::D1Database) -> Result<usize> {
             source_extras(env, &detail).await
         };
         let card = shelf_core::cards::assemble_card(&detail, &extras);
-        db::set_card(d1, &name, &card).await?;
+        db::set_card(d1, &name, &card).await.at()?;
         built += 1;
     }
     Ok(built)
@@ -358,11 +360,11 @@ const ENRICH_BATCH: usize = 20;
 async fn fetch_text(url: &str) -> Result<Option<String>> {
     let mut res = Fetch::Url(url.parse().map_err(|_| Error::RustError("bad url".into()))?)
         .send()
-        .await?;
+        .await.at()?;
     if res.status_code() != 200 {
         return Ok(None);
     }
-    Ok(Some(res.text().await?))
+    Ok(Some(res.text().await.at()?))
 }
 
 fn yaml_value(text: &str, key: &str) -> Option<String> {
@@ -411,7 +413,7 @@ fn repo_owner(url: &str) -> Option<String> {
 /// from the modular-community recipe files. Dir names are matched
 /// case-insensitively to package names.
 async fn enrich(env: &Env, d1: &worker::D1Database) -> Result<usize> {
-    let pending = db::unenriched_channel_tins(d1, ENRICH_BATCH).await?;
+    let pending = db::unenriched_channel_tins(d1, ENRICH_BATCH).await.at()?;
     if pending.is_empty() {
         return Ok(0);
     }
@@ -423,7 +425,7 @@ async fn enrich(env: &Env, d1: &worker::D1Database) -> Result<usize> {
     let listing_url =
         format!("https://api.github.com/repos/{RECIPES_REPO}/contents/recipes");
     let dirs: Vec<DirEntry> = github_json(env, &listing_url)
-        .await?
+        .await.at()?
         .ok_or_else(|| Error::RustError("recipes listing unavailable".into()))?;
     // Match package name to recipe dir with increasing looseness: exact
     // (case-insensitive), separator-insensitive, then with mojo affixes
@@ -452,14 +454,14 @@ async fn enrich(env: &Env, d1: &worker::D1Database) -> Result<usize> {
     for name in pending {
         let Some(dir) = find_dir(&name) else {
             // No recipe dir matches: mark checked so we don't retry forever.
-            db::enrich_channel_tin(d1, &name, "", None, None).await?;
+            db::enrich_channel_tin(d1, &name, "", None, None).await.at()?;
             continue;
         };
         let raw_url = format!(
             "https://raw.githubusercontent.com/{RECIPES_REPO}/main/recipes/{dir}/recipe.yaml"
         );
-        let Some(recipe) = fetch_text(&raw_url).await? else {
-            db::enrich_channel_tin(d1, &name, "", None, None).await?;
+        let Some(recipe) = fetch_text(&raw_url).await.at()? else {
+            db::enrich_channel_tin(d1, &name, "", None, None).await.at()?;
             continue;
         };
         let repository = yaml_value(&recipe, "repository:")
@@ -476,7 +478,7 @@ async fn enrich(env: &Env, d1: &worker::D1Database) -> Result<usize> {
             summary.as_deref(),
             repository.as_deref(),
         )
-        .await?;
+        .await.at()?;
         enriched += 1;
     }
     Ok(enriched)

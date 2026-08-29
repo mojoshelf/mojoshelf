@@ -7,6 +7,7 @@
 use crate::db;
 use serde_json::{json, Value};
 use shelf_core::TinSummary;
+use crate::located::Located;
 use worker::*;
 
 const LATEST_PROTOCOL: &str = "2025-06-18";
@@ -172,14 +173,14 @@ async fn call_tool(
     let result = match tool {
         "search_tins" => {
             let query = str_arg("query").unwrap_or_default();
-            let tins = db::list_tins(&d1, &query).await?;
+            let tins = db::list_tins(&d1, &query).await.at()?;
             tool_text(render_search(&tins, &query), false)
         }
         "tin_info" => {
             let Some(name) = str_arg("name") else {
                 return Ok(Err((-32602, "tin_info needs arguments: {\"name\": …}".into())));
             };
-            match crate::card_markdown(&d1, &name).await? {
+            match crate::card_markdown(&d1, &name).await.at()? {
                 Some(card) => tool_text(card, false),
                 None => tool_text(unknown_tin_text(&name), true),
             }
@@ -188,7 +189,7 @@ async fn call_tool(
             let Some(name) = str_arg("name") else {
                 return Ok(Err((-32602, "usage_example needs arguments: {\"name\": …}".into())));
             };
-            match crate::card_markdown(&d1, &name).await? {
+            match crate::card_markdown(&d1, &name).await.at()? {
                 Some(card) => tool_text(usage_sections(&card), false),
                 None => tool_text(unknown_tin_text(&name), true),
             }

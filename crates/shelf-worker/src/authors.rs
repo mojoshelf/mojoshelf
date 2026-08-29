@@ -4,6 +4,7 @@
 use crate::{auth, db, error_json, html};
 use serde::Deserialize;
 use serde_json::json;
+use crate::located::Located;
 use worker::wasm_bindgen::JsValue;
 use worker::*;
 
@@ -84,7 +85,7 @@ async fn github_user(env: &Env, code: &str) -> Result<Option<GhUser>> {
         .with_headers(headers)
         .with_body(Some(JsValue::from_str(&body.to_string())));
     let req = Request::new_with_init("https://github.com/login/oauth/access_token", &init)?;
-    let token: TokenResp = Fetch::Request(req).send().await?.json().await?;
+    let token: TokenResp = Fetch::Request(req).send().await.at()?.json().await.at()?;
     let Some(access_token) = token.access_token else {
         return Ok(None);
     };
@@ -96,7 +97,7 @@ async fn github_user(env: &Env, code: &str) -> Result<Option<GhUser>> {
     let mut init = RequestInit::new();
     init.with_method(Method::Get).with_headers(headers);
     let req = Request::new_with_init("https://api.github.com/user", &init)?;
-    Ok(Some(Fetch::Request(req).send().await?.json().await?))
+    Ok(Some(Fetch::Request(req).send().await.at()?.json().await.at()?))
 }
 
 pub async fn callback(req: Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -112,10 +113,10 @@ pub async fn callback(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     if auth::cookie(&req, auth::STATE_COOKIE) != Some(state) {
         return error_json("OAuth state mismatch; try signing in again", 400);
     }
-    let Some(user) = github_user(&ctx.env, &code).await? else {
+    let Some(user) = github_user(&ctx.env, &code).await.at()? else {
         return error_json("GitHub did not accept the sign-in; try again", 400);
     };
-    let author = db::upsert_author(&ctx.env.d1("DB")?, user.id, &user.login).await?;
+    let author = db::upsert_author(&ctx.env.d1("DB")?, user.id, &user.login).await.at()?;
     let Some(secret) = session_secret(&ctx.env) else {
         return error_json("session secret is not configured", 503);
     };
@@ -137,10 +138,10 @@ pub async fn logout(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
 
 pub async fn page(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let d1 = ctx.env.d1("DB")?;
-    match current_author(&req, &ctx).await? {
+    match current_author(&req, &ctx).await.at()? {
         None => Response::from_html(html::authors_signed_out()),
         Some(author) => {
-            let tins = author_tins_with_versions(&d1, author.id).await?;
+            let tins = author_tins_with_versions(&d1, author.id).await.at()?;
             Response::from_html(html::authors_dashboard(
                 &author.github_login,
                 author.token_hash.is_some(),
@@ -156,8 +157,8 @@ async fn author_tins_with_versions(
     author_id: i64,
 ) -> Result<Vec<(db::TinRow, Vec<db::VersionRow>)>> {
     let mut out = Vec::new();
-    for tin in db::tins_of_author(d1, author_id).await? {
-        let versions = db::versions_of(d1, tin.id).await?;
+    for tin in db::tins_of_author(d1, author_id).await.at()? {
+        let versions = db::versions_of(d1, tin.id).await.at()?;
         out.push((tin, versions));
     }
     Ok(out)
@@ -165,13 +166,13 @@ async fn author_tins_with_versions(
 
 /// Generates (or rotates) the author's publish token; shown once.
 pub async fn generate_token(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let Some(author) = current_author(&req, &ctx).await? else {
+    let Some(author) = current_author(&req, &ctx).await.at()? else {
         return error_json("sign in first", 401);
     };
     let d1 = ctx.env.d1("DB")?;
     let token = format!("shelf_{}", auth::random_hex(24)?);
-    db::set_token_hash(&d1, author.id, &auth::sha256_hex(&token)).await?;
-    let tins = author_tins_with_versions(&d1, author.id).await?;
+    db::set_token_hash(&d1, author.id, &auth::sha256_hex(&token)).await.at()?;
+    let tins = author_tins_with_versions(&d1, author.id).await.at()?;
     Response::from_html(html::authors_dashboard(
         &author.github_login,
         true,
@@ -184,11 +185,11 @@ async fn owned_tin(
     req: &Request,
     ctx: &RouteContext<()>,
 ) -> Result<std::result::Result<(db::AuthorRow, db::TinRow), Response>> {
-    let Some(author) = current_author(req, ctx).await? else {
+    let Some(author) = current_author(req, ctx).await.at()? else {
         return Ok(Err(error_json("sign in first", 401)?));
     };
     let name = ctx.param("name").expect("route param");
-    let Some(tin) = db::tin_by_name(&ctx.env.d1("DB")?, name).await? else {
+    let Some(tin) = db::tin_by_name(&ctx.env.d1("DB")?, name).await.at()? else {
         return Ok(Err(error_json("tin not found", 404)?));
     };
     if tin.author_id != Some(author.id) {
@@ -201,11 +202,11 @@ async fn owned_tin(
 pub async fn author_page(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let login = ctx.param("login").expect("route param");
     let d1 = ctx.env.d1("DB")?;
-    if db::author_by_login(&d1, login).await?.is_none() {
+    if db::author_by_login(&d1, login).await.at()?.is_none() {
         return Response::error("author not found", 404);
     }
     let tins: Vec<_> = db::list_tins(&d1, "")
-        .await?
+        .await.at()?
         .into_iter()
         .filter(|b| b.author.as_deref() == Some(login.as_str()))
         .collect();
@@ -213,35 +214,35 @@ pub async fn author_page(_req: Request, ctx: RouteContext<()>) -> Result<Respons
 }
 
 pub async fn delete_tin(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let (_, tin) = match owned_tin(&req, &ctx).await? {
+    let (_, tin) = match owned_tin(&req, &ctx).await.at()? {
         Ok(v) => v,
         Err(resp) => return Ok(resp),
     };
     let d1 = ctx.env.d1("DB")?;
-    if db::dependent_count(&d1, tin.id).await? > 0 {
+    if db::dependent_count(&d1, tin.id).await.at()? > 0 {
         return error_json("other tins depend on this tin; it cannot be deleted", 409);
     }
-    db::delete_tin(&d1, tin.id).await?;
+    db::delete_tin(&d1, tin.id).await.at()?;
     see_other("/authors", &[])
 }
 
 pub async fn delete_version(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let (_, tin) = match owned_tin(&req, &ctx).await? {
+    let (_, tin) = match owned_tin(&req, &ctx).await.at()? {
         Ok(v) => v,
         Err(resp) => return Ok(resp),
     };
     let version = ctx.param("version").expect("route param");
     let d1 = ctx.env.d1("DB")?;
-    let versions = db::versions_of(&d1, tin.id).await?;
+    let versions = db::versions_of(&d1, tin.id).await.at()?;
     let Some(row) = versions.iter().find(|v| &v.version == version) else {
         return error_json("version not found", 404);
     };
-    if versions.len() == 1 && db::dependent_count(&d1, tin.id).await? > 0 {
+    if versions.len() == 1 && db::dependent_count(&d1, tin.id).await.at()? > 0 {
         return error_json(
             "this is the last published version and other tins depend on this tin",
             409,
         );
     }
-    db::delete_version(&d1, row.id).await?;
+    db::delete_version(&d1, row.id).await.at()?;
     see_other("/authors", &[])
 }

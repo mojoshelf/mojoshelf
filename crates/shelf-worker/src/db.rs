@@ -4,6 +4,7 @@
 use serde::Deserialize;
 use shelf_core::{TinDetail, TinSummary, VersionInfo};
 use std::collections::HashMap;
+use crate::located::Located;
 use worker::wasm_bindgen::JsValue;
 use worker::{D1Database, Result};
 
@@ -78,7 +79,7 @@ pub async fn versions_of(d1: &D1Database, tin_id: i64) -> Result<Vec<VersionRow>
     )
     .bind(&[JsValue::from(tin_id as f64)])?
     .all()
-    .await?
+    .await.at()?
     .results::<VersionRow>()
 }
 
@@ -94,7 +95,7 @@ pub async fn dependency_names(d1: &D1Database, version_id: i64) -> Result<Vec<St
         )
         .bind(&[JsValue::from(version_id as f64)])?
         .all()
-        .await?
+        .await.at()?
         .results::<Row>()?;
     Ok(rows.into_iter().map(|r| r.name).collect())
 }
@@ -108,7 +109,7 @@ pub async fn list_tins(d1: &D1Database, q: &str) -> Result<Vec<TinSummary>> {
         ))
         .bind(&[q.into(), pattern.into()])?
         .all()
-        .await?
+        .await.at()?
         .results::<TinRow>()?;
 
     #[derive(Deserialize)]
@@ -119,7 +120,7 @@ pub async fn list_tins(d1: &D1Database, q: &str) -> Result<Vec<TinSummary>> {
     let versions = d1
         .prepare("SELECT tin_id, version FROM versions")
         .all()
-        .await?
+        .await.at()?
         .results::<VRow>()?;
     let mut by_tin: HashMap<i64, Vec<String>> = HashMap::new();
     for v in versions {
@@ -164,10 +165,10 @@ pub async fn list_tins(d1: &D1Database, q: &str) -> Result<Vec<TinSummary>> {
 }
 
 pub async fn tin_detail(d1: &D1Database, name: &str) -> Result<Option<TinDetail>> {
-    let Some(tin) = tin_by_name(d1, name).await? else {
+    let Some(tin) = tin_by_name(d1, name).await.at()? else {
         return Ok(None);
     };
-    let mut rows = versions_of(d1, tin.id).await?;
+    let mut rows = versions_of(d1, tin.id).await.at()?;
     rows.sort_by(|a, b| {
         let pa = semver::Version::parse(&a.version);
         let pb = semver::Version::parse(&b.version);
@@ -179,7 +180,7 @@ pub async fn tin_detail(d1: &D1Database, name: &str) -> Result<Option<TinDetail>
     let mut versions = Vec::with_capacity(rows.len());
     for row in rows {
         versions.push(VersionInfo {
-            dependencies: dependency_names(d1, row.id).await?,
+            dependencies: dependency_names(d1, row.id).await.at()?,
             version: row.version,
             commit_sha: row.commit_sha,
             published_at: row.published_at,
@@ -187,7 +188,7 @@ pub async fn tin_detail(d1: &D1Database, name: &str) -> Result<Option<TinDetail>
     }
     Ok(Some(TinDetail {
         tags: tin.tag_list(),
-        dependents: dependents_of(d1, tin.id).await?,
+        dependents: dependents_of(d1, tin.id).await.at()?,
         author: if tin.kind == "channel" {
             tin.channel_author.clone().filter(|a| !a.is_empty())
         } else {
@@ -239,7 +240,7 @@ pub async fn insert_version(
             ])?,
         );
     }
-    d1.batch(stmts).await?;
+    d1.batch(stmts).await.at()?;
     Ok(())
 }
 
@@ -251,7 +252,7 @@ pub async fn upsert_author(d1: &D1Database, github_id: i64, login: &str) -> Resu
     )
     .bind(&[JsValue::from(github_id as f64), login.into()])?
     .first::<AuthorRow>(None)
-    .await?
+    .await.at()?
     .ok_or_else(|| worker::Error::RustError("author upsert returned no row".into()))
 }
 
@@ -273,7 +274,7 @@ pub async fn set_token_hash(d1: &D1Database, author_id: i64, hash: &str) -> Resu
     d1.prepare("UPDATE authors SET token_hash = ?2 WHERE id = ?1")
         .bind(&[JsValue::from(author_id as f64), hash.into()])?
         .run()
-        .await?;
+        .await.at()?;
     Ok(())
 }
 
@@ -281,7 +282,7 @@ pub async fn tins_of_author(d1: &D1Database, author_id: i64) -> Result<Vec<TinRo
     d1.prepare(&format!("{TIN_SELECT} WHERE b.author_id = ?1 ORDER BY b.name"))
         .bind(&[JsValue::from(author_id as f64)])?
         .all()
-        .await?
+        .await.at()?
         .results::<TinRow>()
 }
 
@@ -305,7 +306,7 @@ pub async fn create_tin(
         tags.into(),
     ])?
     .run()
-    .await?;
+    .await.at()?;
     Ok(())
 }
 
@@ -337,7 +338,7 @@ pub async fn claim_tin(
         tags.into(),
     ])?
     .run()
-    .await?;
+    .await.at()?;
     Ok(())
 }
 
@@ -363,7 +364,7 @@ pub async fn dependents_of(d1: &D1Database, tin_id: i64) -> Result<Vec<String>> 
         )
         .bind(&[JsValue::from(tin_id as f64)])?
         .all()
-        .await?
+        .await.at()?
         .results::<Row>()?;
     Ok(rows.into_iter().map(|r| r.name).collect())
 }
@@ -382,7 +383,7 @@ pub async fn dependent_count(d1: &D1Database, tin_id: i64) -> Result<i64> {
         )
         .bind(&[JsValue::from(tin_id as f64)])?
         .first::<Row>(None)
-        .await?;
+        .await.at()?;
     Ok(row.map(|r| r.n).unwrap_or(0))
 }
 
@@ -393,7 +394,7 @@ pub async fn delete_version(d1: &D1Database, version_id: i64) -> Result<()> {
             .bind(&[id.clone()])?,
         d1.prepare("DELETE FROM versions WHERE id = ?1").bind(&[id])?,
     ])
-    .await?;
+    .await.at()?;
     Ok(())
 }
 
@@ -409,7 +410,7 @@ pub async fn delete_tin(d1: &D1Database, tin_id: i64) -> Result<()> {
             .bind(&[id.clone()])?,
         d1.prepare("DELETE FROM tins WHERE id = ?1").bind(&[id])?,
     ])
-    .await?;
+    .await.at()?;
     Ok(())
 }
 
@@ -429,7 +430,7 @@ pub async fn upsert_channel_tin(
     )
     .bind(&[name.into(), url.into(), version.into()])?
     .run()
-    .await?;
+    .await.at()?;
     Ok(())
 }
 
@@ -455,7 +456,7 @@ pub async fn enrich_channel_tin(
         url.map(worker::wasm_bindgen::JsValue::from).unwrap_or(worker::wasm_bindgen::JsValue::NULL),
     ])?
     .run()
-    .await?;
+    .await.at()?;
     Ok(())
 }
 
@@ -468,7 +469,7 @@ pub async fn unenriched_channel_tins(d1: &D1Database, limit: usize) -> Result<Ve
         .prepare("SELECT name FROM tins WHERE kind = 'channel' AND channel_author IS NULL LIMIT ?1")
         .bind(&[worker::wasm_bindgen::JsValue::from(limit as f64)])?
         .all()
-        .await?
+        .await.at()?
         .results::<Row>()?;
     Ok(rows.into_iter().map(|r| r.name).collect())
 }
@@ -486,7 +487,7 @@ pub async fn set_source_channel_version(
             version.map(worker::wasm_bindgen::JsValue::from).unwrap_or(worker::wasm_bindgen::JsValue::NULL),
         ])?
         .run()
-        .await?;
+        .await.at()?;
     Ok(())
 }
 
@@ -498,7 +499,7 @@ pub async fn graduated_source_tin_names(d1: &D1Database) -> Result<Vec<String>> 
     let rows = d1
         .prepare("SELECT name FROM tins WHERE kind = 'source' AND channel_version IS NOT NULL")
         .all()
-        .await?
+        .await.at()?
         .results::<Row>()?;
     Ok(rows.into_iter().map(|r| r.name).collect())
 }
@@ -517,7 +518,7 @@ pub async fn stale_liveliness_tins(d1: &D1Database, limit: usize) -> Result<Vec<
         )
         .bind(&[worker::wasm_bindgen::JsValue::from(limit as f64)])?
         .all()
-        .await?
+        .await.at()?
         .results::<Row>()?;
     Ok(rows.into_iter().map(|r| (r.name, r.url)).collect())
 }
@@ -544,7 +545,7 @@ pub async fn set_liveliness(
         commits_year.map(|v| worker::wasm_bindgen::JsValue::from(v as f64)).unwrap_or(worker::wasm_bindgen::JsValue::NULL),
     ])?
     .run()
-    .await?;
+    .await.at()?;
     Ok(())
 }
 
@@ -556,7 +557,7 @@ pub async fn channel_tin_names(d1: &D1Database) -> Result<Vec<String>> {
     let rows = d1
         .prepare("SELECT name FROM tins WHERE kind = 'channel'")
         .all()
-        .await?
+        .await.at()?
         .results::<Row>()?;
     Ok(rows.into_iter().map(|r| r.name).collect())
 }
@@ -565,7 +566,7 @@ pub async fn delete_channel_tin(d1: &D1Database, name: &str) -> Result<()> {
     d1.prepare("DELETE FROM tins WHERE name = ?1 AND kind = 'channel'")
         .bind(&[name.into()])?
         .run()
-        .await?;
+        .await.at()?;
     Ok(())
 }
 
@@ -581,7 +582,7 @@ pub async fn upsert_tin(d1: &D1Database, name: &str, url: &str, description: &st
     )
     .bind(&[name.into(), url.into(), description.into()])?
     .run()
-    .await?;
+    .await.at()?;
     Ok(())
 }
 
@@ -596,7 +597,7 @@ pub async fn stale_card_tins(d1: &D1Database, limit: usize) -> Result<Vec<String
         .prepare("SELECT name FROM tins ORDER BY card_at IS NOT NULL, card_at ASC LIMIT ?1")
         .bind(&[JsValue::from(limit as f64)])?
         .all()
-        .await?
+        .await.at()?
         .results::<Row>()?;
     Ok(rows.into_iter().map(|r| r.name).collect())
 }
@@ -608,7 +609,7 @@ pub async fn set_card(d1: &D1Database, name: &str, card: &str) -> Result<()> {
     )
     .bind(&[name.into(), card.into()])?
     .run()
-    .await?;
+    .await.at()?;
     Ok(())
 }
 
@@ -623,7 +624,7 @@ pub async fn card_of(d1: &D1Database, name: &str) -> Result<Option<Option<String
         .prepare("SELECT card FROM tins WHERE name = ?1")
         .bind(&[name.into()])?
         .first::<Row>(None)
-        .await?
+        .await.at()?
         .map(|r| r.card))
 }
 
@@ -640,7 +641,7 @@ pub async fn all_cards(d1: &D1Database) -> Result<Vec<(String, Option<String>, S
     let rows = d1
         .prepare("SELECT name, description, url, card FROM tins ORDER BY kind = 'channel', name")
         .all()
-        .await?
+        .await.at()?
         .results::<Row>()?;
     Ok(rows
         .into_iter()
@@ -671,6 +672,6 @@ pub async fn set_verified(
         compiler.map(JsValue::from).unwrap_or(JsValue::NULL),
     ])?
     .run()
-    .await?;
+    .await.at()?;
     Ok(())
 }
