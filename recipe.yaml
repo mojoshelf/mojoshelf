@@ -3,7 +3,7 @@
 # channel at https://mojoshelf.org/channel.
 package:
   name: mojoshelf
-  version: 0.2.2
+  version: 0.3.0
 
 source:
   - path: .
