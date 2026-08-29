@@ -45,7 +45,8 @@ window.addEventListener('DOMContentLoaded', function () {{
   if (window.posthog) posthog.init('{POSTHOG_KEY}', {{
     api_host: 'https://mojoshelf.org/ph',
     ui_host: 'https://us.posthog.com',
-    defaults: '2025-05-24'
+    defaults: '2025-05-24',
+    persistence: 'memory'
   }});
 }});
 </script>"#
@@ -168,7 +169,8 @@ fn page(title: &str, active: &str, body: &str) -> String {
 <a href="https://github.com/mojoshelf/mojoshelf/discussions">Discussions</a>
 </div>
 {body}
-<footer>mojoshelf — an experimental registry of reusable Mojo tins, installed as pixi source dependencies or git submodules.</footer>
+<footer>mojoshelf — an experimental registry of reusable Mojo tins, installed as pixi source dependencies or git submodules.<br>
+Anonymous usage analytics via PostHog, proxied first-party: no cookies, no cross-site tracking, no data sold. API and MCP requests are counted with a hashed, truncated identifier.</footer>
 </main>
 {copy_script}
 </body>
