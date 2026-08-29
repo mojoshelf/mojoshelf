@@ -29,6 +29,9 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .get_async("/mcp", mcp::get)
         .post_async("/mcp", mcp::post)
         .options_async("/mcp", mcp::options)
+        .get_async("/ph/*path", posthog_proxy)
+        .post_async("/ph/*path", posthog_proxy)
+        .options_async("/ph/*path", posthog_proxy)
         .get_async("/api/tins", api_list)
         .get_async("/api/tins/:name", api_tin)
         .get_async("/api/tins/:name/resolve", api_resolve)
@@ -59,6 +62,37 @@ pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) 
         Ok(msg) => console_log!("channel sync: {msg}"),
         Err(e) => console_log!("channel sync FAILED: {e}"),
     }
+}
+
+/// Reverse proxy for PostHog so analytics requests stay first-party
+/// (ad-blockers drop *.posthog.com). `/ph/static/*` goes to the assets
+/// host, everything else to US ingestion. Cookies never leave our domain;
+/// the client IP is forwarded so events geolocate correctly.
+async fn posthog_proxy(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let path = ctx.param("path").expect("route param").clone();
+    let upstream = if path.starts_with("static/") {
+        format!("https://us-assets.i.posthog.com/{path}")
+    } else {
+        format!("https://us.i.posthog.com/{path}")
+    };
+    let target = match req.url()?.query() {
+        Some(q) => format!("{upstream}?{q}"),
+        None => upstream,
+    };
+    let headers = req.headers().clone();
+    headers.delete("cookie")?;
+    if let Some(ip) = req.headers().get("cf-connecting-ip")? {
+        headers.set("x-forwarded-for", &ip)?;
+    }
+    let mut init = RequestInit::new();
+    init.with_method(req.method()).with_headers(headers);
+    if !matches!(req.method(), Method::Get | Method::Head) {
+        let body = req.bytes().await?;
+        init.with_body(Some(js_sys::Uint8Array::from(body.as_slice()).into()));
+    }
+    Fetch::Request(Request::new_with_init(&target, &init)?)
+        .send()
+        .await
 }
 
 /// Manual channel sync, gated by any valid publish token (idempotent).

@@ -29,6 +29,29 @@ document.querySelectorAll("pre").forEach(function (pre) {
 });
 </script>"#;
 
+/// PostHog product analytics (US cloud). The project API key is a public
+/// client-side token (safe to embed); until a real `phc_` key is set the
+/// snippet is omitted entirely. Loaded deferred so it never blocks render.
+const POSTHOG_KEY: &str = "phc_n3y95XLFqPzcgcJ34J7HKMCQrC7Ysi5WmGnvhwJbkaCy";
+
+fn posthog_snippet() -> String {
+    if !POSTHOG_KEY.starts_with("phc_") || POSTHOG_KEY == "phc_TODO" {
+        return String::new();
+    }
+    format!(
+        r#"<script defer src="/ph/static/array.js"></script>
+<script>
+window.addEventListener('DOMContentLoaded', function () {{
+  if (window.posthog) posthog.init('{POSTHOG_KEY}', {{
+    api_host: 'https://mojoshelf.org/ph',
+    ui_host: 'https://us.posthog.com',
+    defaults: '2025-05-24'
+  }});
+}});
+</script>"#
+    )
+}
+
 fn page(title: &str, active: &str, body: &str) -> String {
     let item = |href: &str, label: &str| {
         let class = if label == active { " class=\"active\"" } else { "" };
@@ -43,6 +66,7 @@ fn page(title: &str, active: &str, body: &str) -> String {
         item("/packaging", "Packaging"),
         item("/community-channel", "Community channel"),
     );
+    let posthog = posthog_snippet();
     format!(
         r#"<!doctype html>
 <html lang="en">
@@ -134,6 +158,7 @@ fn page(title: &str, active: &str, body: &str) -> String {
   .top-links a:hover {{ color: var(--accent); }}
   footer {{ margin-top: 2rem; font-size: .8rem; color: var(--muted); }}
 </style>
+{posthog}
 </head>
 <body>
 {nav}
