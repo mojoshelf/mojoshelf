@@ -249,6 +249,9 @@ mod tests {
 
     fn detail() -> TinDetail {
         TinDetail {
+            nightly_at: None,
+            nightly_ok: None,
+            nightly_compiler: None,
             name: "zlib-mojo".into(),
             url: "https://github.com/o/zlib.mojo.git".into(),
             description: Some("zlib bindings".into()),

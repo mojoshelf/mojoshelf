@@ -282,6 +282,9 @@ mod tests {
 
     fn summary(name: &str, kind: &str, verified: Option<bool>) -> TinSummary {
         TinSummary {
+            nightly_at: None,
+            nightly_ok: None,
+            nightly_compiler: None,
             name: name.into(),
             url: format!("https://github.com/o/{name}.git"),
             description: Some(format!("{name} library")),

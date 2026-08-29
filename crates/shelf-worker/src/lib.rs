@@ -4,6 +4,7 @@
 
 mod auth;
 mod authors;
+mod badge;
 mod channel;
 mod db;
 mod html;
@@ -37,6 +38,9 @@ pub async fn main(req: Request, env: Env, ctx: Context) -> Result<Response> {
         .get_async("/api/tins/:name", api_tin)
         .get_async("/api/tins/:name/resolve", api_resolve)
         .get_async("/api/tins/:name/card", api_tin_card)
+        .get_async("/api/tins/:name/badge", api_tin_badge)
+        .get_async("/badge/:file", badge_stable_svg)
+        .get_async("/badge/:name/nightly.svg", badge_nightly_svg)
         .post_async("/api/publish", api_publish)
         .post_async("/api/verify", api_verify)
         .post_async("/api/sync-channel", api_sync_channel)
@@ -124,6 +128,74 @@ pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) 
         Ok(msg) => console_log!("channel sync: {msg}"),
         Err(e) => console_log!("channel sync FAILED: {e}"),
     }
+}
+
+/// GET /badge/<tin>.svg — stable verification badge.
+async fn badge_stable_svg(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let file = ctx.param("file").expect("route param").clone();
+    let Some(name) = file.strip_suffix(".svg") else {
+        return Ok(Response::error("expected /badge/<tin>.svg", 404)?);
+    };
+    serve_badge(&ctx, name, false).await
+}
+
+/// GET /badge/<tin>/nightly.svg — nightly early-warning badge.
+async fn badge_nightly_svg(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let name = ctx.param("name").expect("route param").clone();
+    serve_badge(&ctx, &name, true).await
+}
+
+async fn serve_badge(ctx: &RouteContext<()>, name: &str, nightly: bool) -> Result<Response> {
+    let d1 = ctx.env.d1("DB")?;
+    let Some(tin) = db::tin_by_name(&d1, name).await? else {
+        return Ok(Response::error("unknown tin", 404)?);
+    };
+    let (label, (message, color)) = if nightly {
+        (
+            "mojo nightly",
+            badge::nightly_state(tin.nightly_ok.map(|v| v != 0), tin.nightly_compiler.as_deref()),
+        )
+    } else {
+        (
+            "mojoshelf",
+            badge::stable_state(tin.verified_ok.map(|v| v != 0), tin.verified_compiler.as_deref()),
+        )
+    };
+    let headers = Headers::new();
+    headers.set("content-type", "image/svg+xml; charset=utf-8")?;
+    headers.set("cache-control", "public, max-age=3600")?;
+    Ok(Response::ok(badge::render(label, &message, color))?.with_headers(headers))
+}
+
+/// GET /api/tins/:name/badge[?channel=nightly] — same data in the
+/// shields.io endpoint schema, for repos that prefer shields styling.
+async fn api_tin_badge(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let name = ctx.param("name").expect("route param").clone();
+    let nightly = req
+        .url()?
+        .query_pairs()
+        .any(|(k, v)| k == "channel" && v == "nightly");
+    let d1 = ctx.env.d1("DB")?;
+    let Some(tin) = db::tin_by_name(&d1, &name).await? else {
+        return error_json("tin not found", 404);
+    };
+    let (label, (message, color)) = if nightly {
+        (
+            "mojo nightly",
+            badge::nightly_state(tin.nightly_ok.map(|v| v != 0), tin.nightly_compiler.as_deref()),
+        )
+    } else {
+        (
+            "mojoshelf",
+            badge::stable_state(tin.verified_ok.map(|v| v != 0), tin.verified_compiler.as_deref()),
+        )
+    };
+    Response::from_json(&json!({
+        "schemaVersion": 1,
+        "label": label,
+        "message": message,
+        "color": badge::shields_color(color),
+    }))
 }
 
 /// Reverse proxy for PostHog so analytics requests stay first-party
@@ -461,6 +533,10 @@ struct VerifyResult {
     ok: bool,
     #[serde(default)]
     compiler: Option<String>,
+    /// "nightly" targets the separate nightly record; anything else (or
+    /// absent) is the stable verification.
+    #[serde(default)]
+    channel: Option<String>,
 }
 
 async fn api_verify(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -475,7 +551,8 @@ async fn api_verify(mut req: Request, ctx: RouteContext<()>) -> Result<Response>
     for r in &body.results {
         match db::tin_by_name(&d1, &r.name).await? {
             Some(_) => {
-                db::set_verified(&d1, &r.name, r.ok, r.compiler.as_deref()).await?;
+                let nightly = r.channel.as_deref() == Some("nightly");
+                db::set_verified(&d1, &r.name, r.ok, r.compiler.as_deref(), nightly).await?;
                 updated += 1;
             }
             None => unknown += 1,

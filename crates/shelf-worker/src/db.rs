@@ -29,6 +29,9 @@ pub struct TinRow {
     pub verified_at: Option<String>,
     pub verified_ok: Option<i64>,
     pub verified_compiler: Option<String>,
+    pub nightly_at: Option<String>,
+    pub nightly_ok: Option<i64>,
+    pub nightly_compiler: Option<String>,
 }
 
 impl TinRow {
@@ -51,6 +54,7 @@ const TIN_SELECT: &str = "SELECT b.id, b.name, b.url, b.description, b.author_id
     b.stars, b.last_push, b.commits_month, b.commits_year, \
     b.prev_url, b.url_changed_at, \
     b.verified_at, b.verified_ok, b.verified_compiler, \
+    b.nightly_at, b.nightly_ok, b.nightly_compiler, \
     a.github_login AS author FROM tins b LEFT JOIN authors a ON a.id = b.author_id";
 
 #[derive(Deserialize)]
@@ -148,6 +152,9 @@ pub async fn list_tins(d1: &D1Database, q: &str) -> Result<Vec<TinSummary>> {
                 verified_at: b.verified_at,
                 verified_ok: b.verified_ok.map(|v| v != 0),
                 verified_compiler: b.verified_compiler,
+                nightly_at: b.nightly_at,
+                nightly_ok: b.nightly_ok.map(|v| v != 0),
+                nightly_compiler: b.nightly_compiler,
                 name: b.name,
                 url: b.url,
                 description: b.description,
@@ -197,6 +204,9 @@ pub async fn tin_detail(d1: &D1Database, name: &str) -> Result<Option<TinDetail>
         verified_at: tin.verified_at,
         verified_ok: tin.verified_ok.map(|v| v != 0),
         verified_compiler: tin.verified_compiler,
+        nightly_at: tin.nightly_at,
+        nightly_ok: tin.nightly_ok.map(|v| v != 0),
+        nightly_compiler: tin.nightly_compiler,
         name: tin.name,
         url: tin.url,
         description: tin.description,
@@ -638,17 +648,23 @@ pub async fn all_cards(d1: &D1Database) -> Result<Vec<(String, Option<String>, S
         .collect())
 }
 
-/// Records one tin-smoke outcome reported by CI.
+/// Records one tin-smoke outcome reported by CI. `nightly` selects the
+/// separate record for builds against the Mojo nightly channel.
 pub async fn set_verified(
     d1: &D1Database,
     name: &str,
     ok: bool,
     compiler: Option<&str>,
+    nightly: bool,
 ) -> Result<()> {
-    d1.prepare(
+    let sql = if nightly {
+        "UPDATE tins SET nightly_ok = ?2, nightly_compiler = ?3, \
+         nightly_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE name = ?1"
+    } else {
         "UPDATE tins SET verified_ok = ?2, verified_compiler = ?3, \
-         verified_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE name = ?1",
-    )
+         verified_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE name = ?1"
+    };
+    d1.prepare(sql)
     .bind(&[
         name.into(),
         JsValue::from(if ok { 1.0 } else { 0.0 }),

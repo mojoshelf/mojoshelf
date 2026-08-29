@@ -38,6 +38,15 @@ pub struct TinSummary {
     /// mojo-compiler version the last check built against (best effort).
     #[serde(default)]
     pub verified_compiler: Option<String>,
+    /// ISO timestamp of the last tin-smoke check against Mojo nightly.
+    #[serde(default)]
+    pub nightly_at: Option<String>,
+    /// Whether the last nightly check passed on every platform.
+    #[serde(default)]
+    pub nightly_ok: Option<bool>,
+    /// mojo-compiler version of the last nightly check (best effort).
+    #[serde(default)]
+    pub nightly_compiler: Option<String>,
 }
 
 pub fn default_kind() -> String {
@@ -95,6 +104,15 @@ pub struct TinDetail {
     /// mojo-compiler version the last check built against (best effort).
     #[serde(default)]
     pub verified_compiler: Option<String>,
+    /// ISO timestamp of the last tin-smoke check against Mojo nightly.
+    #[serde(default)]
+    pub nightly_at: Option<String>,
+    /// Whether the last nightly check passed on every platform.
+    #[serde(default)]
+    pub nightly_ok: Option<bool>,
+    /// mojo-compiler version of the last nightly check (best effort).
+    #[serde(default)]
+    pub nightly_compiler: Option<String>,
 }
 
 /// One entry of the flat install set from `GET /api/tins/:name/resolve`.

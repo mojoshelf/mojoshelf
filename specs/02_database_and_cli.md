@@ -21,6 +21,9 @@
 | verified_at | TEXT    | ISO 8601; last tin-smoke report   |
 | verified_ok | INTEGER | 1 = smoke build passed everywhere |
 | verified_compiler | TEXT | mojo-compiler used (best effort) |
+| nightly_at  | TEXT    | ISO 8601; last nightly-channel check |
+| nightly_ok  | INTEGER | 1 = nightly smoke build passed    |
+| nightly_compiler | TEXT | nightly mojo-compiler (best effort) |
 
 A publish (or admin edit) that changes a tin's `url` records the old URL and
 the change time. For 30 days afterwards the site (tin page banner, index
@@ -30,9 +33,15 @@ the name changed; the warning then expires automatically.
 For agents: the sync cron precomputes a markdown "card" per tin (import
 name vs package name, install commands, API surface, usage snippet, health)
 served at `/api/tins/<name>/card`, with `/llms.txt` (index) and
-`/llms-full.txt` (all cards). The weekly tin-smoke workflow POSTs per-tin
-build outcomes to `/api/verify` (publish-token gated), surfaced on tin
-pages, in `shelf info`, and in cards. An MCP server at `/mcp` (stateless
+`/llms-full.txt` (all cards). The weekly tin-smoke workflow builds every
+source tin on linux-64, linux-aarch64, and osx-arm64 against both the
+Modular stable and nightly conda channels, and POSTs per-tin, per-channel
+outcomes to `/api/verify` (publish-token gated; `"channel": "nightly"`
+selects the nightly record), surfaced on tin pages, in `shelf info`, and
+in cards. First-party README badges render from the same data:
+`/badge/<tin>.svg` (stable verification) and `/badge/<tin>/nightly.svg`
+(nightly early warning), plus `/api/tins/<name>/badge[?channel=nightly]`
+in the shields.io endpoint schema. An MCP server at `/mcp` (stateless
 streamable HTTP, anonymous, read-only) exposes `search_tins`, `tin_info`,
 and `usage_example` tools over the same data.
 

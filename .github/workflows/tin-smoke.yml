@@ -46,15 +46,20 @@ jobs:
       matrix:
         tin: ${{ fromJSON(needs.discover.outputs.tins) }}
         os: [ubuntu-latest, ubuntu-24.04-arm, macos-15]
+        # stable feeds the badge-bearing verification; nightly is the
+        # early-warning signal (tin page + separate opt-in badge).
+        channel: [stable, nightly]
         exclude:
           # pontoneer does not declare linux-aarch64 yet
           - { tin: pontoneer, os: ubuntu-24.04-arm }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
-    # Matrix outputs collapse to the last writer — fine for a best-effort
-    # compiler version, since every job solves against the same nightly.
+    # Matrix outputs collapse to the last writer per key — fine for a
+    # best-effort compiler version, since every job on one channel solves
+    # against the same repodata. Each job writes only its channel's key.
     outputs:
-      compiler: ${{ steps.compiler.outputs.compiler }}
+      compiler_stable: ${{ steps.compiler.outputs.stable }}
+      compiler_nightly: ${{ steps.compiler.outputs.nightly }}
     steps:
       - name: Install pixi and the shelf extension
         run: |
@@ -69,8 +74,12 @@ jobs:
             ubuntu-24.04-arm) P=linux-aarch64 ;;
             *) P=osx-arm64 ;;
           esac
+          case "${{ matrix.channel }}" in
+            nightly) MODULAR=https://conda.modular.com/max-nightly ;;
+            *) MODULAR=https://conda.modular.com/max ;;
+          esac
           mkdir smoke && cd smoke
-          printf '[workspace]\nname = "smoke"\npreview = ["pixi-build"]\nchannels = ["conda-forge", "https://conda.modular.com/max-nightly", "https://repo.prefix.dev/modular-community"]\nplatforms = ["%s"]\n' "$P" > pixi.toml
+          printf '[workspace]\nname = "smoke"\npreview = ["pixi-build"]\nchannels = ["conda-forge", "%s", "https://repo.prefix.dev/modular-community"]\nplatforms = ["%s"]\n' "$MODULAR" "$P" > pixi.toml
           # pixi streams rattler build output only to a TTY; `script` fakes one
           # so failures show the actual compiler errors in the CI log.
           if [ "$RUNNER_OS" = "Linux" ]; then
@@ -86,7 +95,7 @@ jobs:
         run: |
           V=$(cd smoke && pixi list mojo-compiler 2>/dev/null \
             | awk '$1 == "mojo-compiler" { print $2; exit }') || true
-          echo "compiler=$V" >> "$GITHUB_OUTPUT"
+          echo "${{ matrix.channel }}=$V" >> "$GITHUB_OUTPUT"
 
   # Report each tin's outcome to the registry (shown on tin pages and in
   # `shelf info`). Needs only the jobs API and the SHELF_TOKEN secret — no
@@ -102,7 +111,8 @@ jobs:
         env:
           SHELF_TOKEN: ${{ secrets.SHELF_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          COMPILER: ${{ needs.smoke.outputs.compiler }}
+          COMPILER_STABLE: ${{ needs.smoke.outputs.compiler_stable }}
+          COMPILER_NIGHTLY: ${{ needs.smoke.outputs.compiler_nightly }}
         run: |
           if [ -z "$SHELF_TOKEN" ]; then
             echo "SHELF_TOKEN secret not set; skipping registry report"
@@ -110,14 +120,15 @@ jobs:
           fi
           JOBS=$(curl -sf -H "Authorization: Bearer $GH_TOKEN" \
             "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100")
-          RESULTS=$(echo "$JOBS" | jq -c --arg c "$COMPILER" '
+          RESULTS=$(echo "$JOBS" | jq -c --arg cs "$COMPILER_STABLE" --arg cn "$COMPILER_NIGHTLY" '
             [.jobs[]
              | select(.name | startswith("smoke ("))
-             | {tin: (.name | capture("^smoke \\((?<t>[^,)]+)").t),
-                ok: (.conclusion == "success")}]
-            | group_by(.tin)
-            | map({name: .[0].tin, ok: all(.[]; .ok)}
-                  + (if $c == "" then {} else {compiler: $c} end))')
+             | (.name | capture("^smoke \\((?<t>[^,]+), (?<os>[^,]+), (?<ch>[^,)]+)\\)")) as $m
+             | {tin: $m.t, channel: $m.ch, ok: (.conclusion == "success")}]
+            | group_by([.tin, .channel])
+            | map({name: .[0].tin, channel: .[0].channel, ok: all(.[]; .ok)}
+                  + (([$cs, $cn][if .[0].channel == "nightly" then 1 else 0 end]) as $c
+                     | if $c == "" then {} else {compiler: $c} end))')
           echo "reporting: $RESULTS"
           curl -sf -X POST "https://mojoshelf.org/api/verify" \
             -H "Authorization: Bearer $SHELF_TOKEN" \

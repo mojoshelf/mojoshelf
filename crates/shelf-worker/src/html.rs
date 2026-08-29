@@ -415,6 +415,48 @@ fn verification_line(d: &shelf_core::TinDetail) -> String {
     }
 }
 
+/// "mojo nightly: passing…" line — the early-warning signal, shown only
+/// once a nightly check has run.
+fn nightly_line(d: &shelf_core::TinDetail) -> String {
+    match (d.nightly_ok, d.nightly_at.as_deref()) {
+        (Some(ok), Some(at)) => {
+            let a = age(at);
+            let when = if a.is_empty() || a == "today" {
+                "today".to_string()
+            } else {
+                format!("{a} ago")
+            };
+            let compiler = d
+                .nightly_compiler
+                .as_deref()
+                .map(|c| format!(" with mojo-compiler {}", esc(c)))
+                .unwrap_or_default();
+            if ok {
+                format!(
+                    "<p class=\"install-label\">✓ mojo nightly build passing{compiler} — checked {when}</p>"
+                )
+            } else {
+                format!("<p class=\"install-label\">✗ mojo nightly build failing (checked {when})</p>")
+            }
+        }
+        _ => String::new(),
+    }
+}
+
+/// Copyable README badge markdown for source tins.
+fn badge_section(d: &shelf_core::TinDetail) -> String {
+    if d.kind == "channel" {
+        return String::new();
+    }
+    let name = esc(&d.name);
+    format!(
+        r#"<h2>Badge</h2>
+<p class="install-label">for this tin's README — stable verification, and optionally the nightly signal</p>
+<pre><code>[![mojoshelf](https://mojoshelf.org/badge/{name}.svg)](https://mojoshelf.org/tins/{name})
+[![mojo nightly](https://mojoshelf.org/badge/{name}/nightly.svg)](https://mojoshelf.org/tins/{name})</code></pre>"#
+    )
+}
+
 pub fn tin(d: &shelf_core::TinDetail) -> String {
     if d.kind == "channel" {
         let maintainer = match d.author.as_deref() {
@@ -540,8 +582,10 @@ shelf extension installed once:</p>
 <p>{tags}</p>
 {liveliness}
 {verification}
+{nightly}
 {graduated}
 {install}
+{badge_md}
 <h2>Depends on</h2>
 {depends_on}
 <h2>Depended on by</h2>
@@ -557,6 +601,8 @@ shelf extension installed once:</p>
         dependents = tin_link_list(&d.dependents),
         warning = url_change_warning(&d.url, d.prev_url.as_deref(), d.url_changed_at.as_deref()),
         verification = verification_line(d),
+        nightly = nightly_line(d),
+        badge_md = badge_section(d),
     );
     page(&format!("Mojo Shelf — {}", d.name), "Tins", &body)
 }

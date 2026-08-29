@@ -356,6 +356,18 @@ fn info(reg: &Registry, name: &str) -> Result<()> {
             println!("  smoke test: consumer build FAILING (checked {at})");
         }
     }
+    if let (Some(ok), Some(at)) = (d.nightly_ok, d.nightly_at.as_deref()) {
+        if ok {
+            let compiler = d
+                .nightly_compiler
+                .as_deref()
+                .map(|c| format!(" with mojo-compiler {c}"))
+                .unwrap_or_default();
+            println!("  mojo nightly: build passing{compiler} (checked {at})");
+        } else {
+            println!("  mojo nightly: build FAILING (checked {at})");
+        }
+    }
     if d.kind == "channel" {
         println!(
             "  kind: modular-community channel package (latest {})",
