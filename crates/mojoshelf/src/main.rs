@@ -34,10 +34,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Add a tin (and its dependencies) as submodules under shelf/.
+    /// Add tins (and their dependencies) as submodules under shelf/.
     Add {
-        /// Tin name, optionally with a version: name[@version].
-        spec: String,
+        /// Tin names, each optionally with a version: name[@version].
+        #[arg(required = true, num_args = 1.., value_name = "SPEC")]
+        specs: Vec<String>,
         /// Print the install set without touching git.
         #[arg(long)]
         dry_run: bool,
@@ -88,8 +89,8 @@ fn main() {
     let reg = Registry::new(&cli.registry);
     let pixi_mode = cli.pixi || invoked_as_pixi_extension();
     let result = match cli.cmd {
-        Cmd::Add { spec, dry_run } if pixi_mode => pixi::add(&reg, &spec, dry_run),
-        Cmd::Add { spec, dry_run } => add(&reg, &spec, dry_run),
+        Cmd::Add { specs, dry_run } if pixi_mode => pixi::add(&reg, &specs, dry_run),
+        Cmd::Add { specs, dry_run } => add(&reg, &specs, dry_run),
         Cmd::Remove { name } if pixi_mode => pixi::remove(&name),
         Cmd::Remove { name } => remove(&reg, &name),
         Cmd::Update { name } if pixi_mode => pixi::update(&reg, name.as_deref()),
@@ -121,6 +122,48 @@ mod tests {
         let m2: Manifest =
             toml::from_str("name = \"a\"\nversion = \"1.0.0\"\ntins = [\"csv\"]").unwrap();
         assert_eq!(m2.tins, vec!["csv"]);
+    }
+
+    fn tin(name: &str, version: &str, sha: &str) -> shelf_core::ResolvedTin {
+        shelf_core::ResolvedTin {
+            name: name.into(),
+            url: format!("https://example.test/{name}.git"),
+            version: version.into(),
+            commit_sha: sha.into(),
+            kind: "source".into(),
+            prev_url: None,
+            url_changed_at: None,
+        }
+    }
+
+    #[test]
+    fn merge_keeps_first_seen_order_and_collapses_shared_deps() {
+        // Two specs that share a dependency, plus a name listed twice.
+        let merged = super::merge_resolved(vec![
+            vec![tin("shared", "1.0.0", "aaa"), tin("first", "1.0.0", "bbb")],
+            vec![tin("shared", "1.0.0", "aaa"), tin("second", "1.0.0", "ccc")],
+            vec![tin("first", "1.0.0", "bbb")],
+        ])
+        .unwrap();
+        let names: Vec<&str> = merged.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, vec!["shared", "first", "second"]);
+    }
+
+    #[test]
+    fn merge_rejects_two_pins_of_the_same_tin() {
+        let err = super::merge_resolved(vec![
+            vec![tin("dep", "1.0.0", "aaaaaaaaaaaaaaaa")],
+            vec![tin("dep", "2.0.0", "bbbbbbbbbbbbbbbb")],
+        ])
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("conflicting requests for 'dep'"), "{err}");
+        assert!(err.contains("1.0.0") && err.contains("2.0.0"), "{err}");
+    }
+
+    #[test]
+    fn merge_of_nothing_is_empty() {
+        assert!(super::merge_resolved(vec![]).unwrap().is_empty());
     }
 }
 
@@ -164,13 +207,63 @@ fn warn_recent_url_change(name: &str, url: &str, prev_url: Option<&str>, changed
 }
 
 fn install_set(reg: &Registry, name: &str, version: Option<&str>) -> Result<Vec<ResolvedTin>> {
-    let set = reg
-        .resolve(name, version)
-        .with_context(|| format!("could not resolve '{name}'"))?;
+    reg.resolve(name, version)
+        .with_context(|| format!("could not resolve '{name}'"))
+}
+
+/// Resolve every requested spec into one install set.
+///
+/// All specs are resolved before anything is installed, so a typo in the
+/// second name fails the command instead of leaving the first tin
+/// half-applied.
+pub(crate) fn resolve_all(reg: &Registry, specs: &[String]) -> Result<Vec<ResolvedTin>> {
+    let mut sets = Vec::with_capacity(specs.len());
+    for spec in specs {
+        let (name, version) = split_spec(spec);
+        sets.push(install_set(reg, name, version)?);
+    }
+    let set = merge_resolved(sets)?;
     for tin in &set {
-        warn_recent_url_change(&tin.name, &tin.url, tin.prev_url.as_deref(), tin.url_changed_at.as_deref());
+        warn_recent_url_change(
+            &tin.name,
+            &tin.url,
+            tin.prev_url.as_deref(),
+            tin.url_changed_at.as_deref(),
+        );
     }
     Ok(set)
+}
+
+/// Collapse per-spec resolve sets into a single install set.
+///
+/// Tins reached from more than one spec -- a shared dependency, or a name
+/// listed twice -- collapse to one entry, keeping first-seen order so the
+/// printed plan matches the order the user asked for. Two specs that pin the
+/// same tin to different commits are a hard error rather than a
+/// last-writer-wins race.
+fn merge_resolved(sets: Vec<Vec<ResolvedTin>>) -> Result<Vec<ResolvedTin>> {
+    let mut set: Vec<ResolvedTin> = Vec::new();
+    for resolved in sets {
+        for tin in resolved {
+            match set.iter().find(|t| t.name == tin.name) {
+                Some(existing) if existing.commit_sha != tin.commit_sha => bail!(
+                    "conflicting requests for '{}': {} ({}) and {} ({}); pick one version",
+                    tin.name,
+                    existing.version,
+                    short_sha(&existing.commit_sha),
+                    tin.version,
+                    short_sha(&tin.commit_sha),
+                ),
+                Some(_) => {}
+                None => set.push(tin),
+            }
+        }
+    }
+    Ok(set)
+}
+
+fn short_sha(sha: &str) -> &str {
+    sha.get(..12).unwrap_or(sha)
 }
 
 fn install(root: &Path, tin: &ResolvedTin) -> Result<()> {
@@ -181,9 +274,8 @@ fn install(root: &Path, tin: &ResolvedTin) -> Result<()> {
     Ok(())
 }
 
-fn add(reg: &Registry, spec: &str, dry_run: bool) -> Result<()> {
-    let (name, version) = split_spec(spec);
-    let set = install_set(reg, name, version)?;
+fn add(reg: &Registry, specs: &[String], dry_run: bool) -> Result<()> {
+    let set = resolve_all(reg, specs)?;
     if dry_run {
         println!("would install into shelf/:");
         for b in &set {

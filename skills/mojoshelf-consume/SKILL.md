@@ -29,7 +29,7 @@ latter automatically, so `pixi shelf <command>` works out of the box.
 
 ## Two install modes
 
-**Pixi mode** (`pixi shelf add <name>`, or `shelf add --pixi <name>`): tins
+**Pixi mode** (`pixi shelf add <name>...`, or `shelf add --pixi <name>...`): tins
 become registry-pinned git source dependencies in pixi.toml, added flat via
 `pixi add --git <url> --rev <commit>` and built by the pixi-build-mojo
 backend. Requires `preview = ["pixi-build"]` and channels including conda-forge,
@@ -39,7 +39,7 @@ section (the CLI tells you if it is missing) and requires the tin to be a
 pixi package (a `[package]` section in its pixi.toml). If a tin does not
 support this yet, fall back to submodule mode.
 
-**Submodule mode** (`shelf add <name>`): works for every tin; details below.
+**Submodule mode** (`shelf add <name>...`): works for every tin; details below.
 
 ## Discover tins without the CLI
 
@@ -71,6 +71,7 @@ Run from the consuming project's repo root (must be a git repository):
 shelf search <term>       # search names, descriptions, and tags
 shelf info <name>         # versions, dependencies, dependents
 shelf add <name>          # latest version; or shelf add <name>@<version>
+shelf add <a> <b> <c>     # several at once; mix pinned and unpinned freely
 shelf add <name> --dry-run  # preview the install set without touching git
 ```
 
@@ -78,6 +79,13 @@ shelf add <name> --dry-run  # preview the install set without touching git
 and adds every tin — direct and transitive — as a submodule under
 `shelf/<name>`, pinned to its published commit. Submodules are never nested.
 Commit the resulting `.gitmodules` and submodule changes.
+
+Prefer one `shelf add` with every tin the project needs over a series of
+single-tin calls. All specs are resolved before anything is written, so a
+typo in the third name fails the command instead of leaving the first two
+half-applied; a dependency shared by two tins is installed once; and two
+specs that pin the same tin to different commits are reported as a conflict
+rather than silently resolving to whichever ran last.
 
 ## Build against installed tins
 

@@ -51,13 +51,12 @@ fn ensure_pixi_build_preview() -> Result<()> {
     Ok(())
 }
 
-pub fn add(reg: &Registry, spec: &str, dry_run: bool) -> Result<()> {
-    add_inner(reg, spec, dry_run, false)
+pub fn add(reg: &Registry, specs: &[String], dry_run: bool) -> Result<()> {
+    add_inner(reg, specs, dry_run, false)
 }
 
-fn add_inner(reg: &Registry, spec: &str, dry_run: bool, force: bool) -> Result<()> {
-    let (name, version) = crate::split_spec(spec);
-    let set = crate::install_set(reg, name, version)?;
+fn add_inner(reg: &Registry, specs: &[String], dry_run: bool, force: bool) -> Result<()> {
+    let set = crate::resolve_all(reg, specs)?;
     if dry_run {
         println!("would run:");
         for b in &set {
@@ -105,7 +104,7 @@ pub fn update(reg: &Registry, name: Option<&str>) -> Result<()> {
     let Some(name) = name else {
         bail!("pixi mode updates one tin at a time: shelf update <name>");
     };
-    add_inner(reg, name, false, true)
+    add_inner(reg, std::slice::from_ref(&name.to_string()), false, true)
 }
 
 pub fn remove(name: &str) -> Result<()> {
