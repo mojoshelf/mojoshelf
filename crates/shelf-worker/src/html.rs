@@ -32,7 +32,7 @@ document.querySelectorAll("pre").forEach(function (pre) {
 /// PostHog product analytics (US cloud). The project API key is a public
 /// client-side token (safe to embed); until a real `phc_` key is set the
 /// snippet is omitted entirely. Loaded deferred so it never blocks render.
-const POSTHOG_KEY: &str = "phc_n3y95XLFqPzcgcJ34J7HKMCQrC7Ysi5WmGnvhwJbkaCy";
+pub(crate) const POSTHOG_KEY: &str = "phc_n3y95XLFqPzcgcJ34J7HKMCQrC7Ysi5WmGnvhwJbkaCy";
 
 fn posthog_snippet() -> String {
     if !POSTHOG_KEY.starts_with("phc_") || POSTHOG_KEY == "phc_TODO" {

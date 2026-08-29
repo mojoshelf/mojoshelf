@@ -15,8 +15,9 @@ use std::collections::{HashSet, VecDeque};
 use worker::*;
 
 #[event(fetch)]
-pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
-    Router::new()
+pub async fn main(req: Request, env: Env, ctx: Context) -> Result<Response> {
+    let tracked = server_event(&req).await;
+    let resp = Router::new()
         .get_async("/", home)
         .get_async("/getting-started", getting_started)
         .get_async("/install-modes", install_modes)
@@ -53,7 +54,68 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .get_async("/admin", admin_page)
         .post_async("/admin/tins", admin_upsert)
         .run(req, env)
-        .await
+        .await?;
+    if let Some((event, distinct_id, mut props)) = tracked {
+        props["status"] = json!(resp.status_code());
+        ctx.wait_until(posthog_capture(event, distinct_id, props));
+    }
+    Ok(resp)
+}
+
+/// Server-side analytics for agent traffic: MCP calls and /api/tins hits.
+/// Anonymous — the distinct id is a truncated hash of ip+user-agent and no
+/// person profiles are created. Returns (event, distinct_id, properties).
+async fn server_event(req: &Request) -> Option<(&'static str, String, serde_json::Value)> {
+    let path = req.path();
+    let (event, mut props) = if path == "/mcp" && req.method() == Method::Post {
+        let mut clone = req.clone().ok()?;
+        let body: serde_json::Value = clone.json().await.ok()?;
+        let rpc = body.get("method").and_then(|m| m.as_str()).unwrap_or("");
+        let tool = body.pointer("/params/name").and_then(|t| t.as_str());
+        ("mcp_request", json!({ "rpc_method": rpc, "tool": tool }))
+    } else if path.starts_with("/api/tins") && req.method() == Method::Get {
+        let rest = path.trim_start_matches("/api/tins").trim_start_matches('/');
+        let mut parts = rest.split('/');
+        let tin = parts.next().unwrap_or("");
+        let endpoint = match (tin.is_empty(), parts.next()) {
+            (true, _) => "list",
+            (false, None) => "detail",
+            (false, Some(sub)) => match sub {
+                "resolve" => "resolve",
+                "card" => "card",
+                _ => "other",
+            },
+        };
+        let tin = (!tin.is_empty()).then(|| tin.to_string());
+        ("api_tins_request", json!({ "endpoint": endpoint, "tin": tin }))
+    } else {
+        return None;
+    };
+    let ip = req.headers().get("cf-connecting-ip").ok().flatten().unwrap_or_default();
+    let ua = req.headers().get("user-agent").ok().flatten().unwrap_or_default();
+    props["path"] = json!(path);
+    props["user_agent"] = json!(ua);
+    props["$process_person_profile"] = json!(false);
+    let distinct_id = format!("agent-{}", &auth::sha256_hex(&format!("{ip}|{ua}"))[..16]);
+    Some((event, distinct_id, props))
+}
+
+async fn posthog_capture(event: &'static str, distinct_id: String, properties: serde_json::Value) {
+    let payload = json!({
+        "api_key": html::POSTHOG_KEY,
+        "event": event,
+        "distinct_id": distinct_id,
+        "properties": properties,
+    });
+    let headers = Headers::new();
+    let _ = headers.set("content-type", "application/json");
+    let mut init = RequestInit::new();
+    init.with_method(Method::Post)
+        .with_headers(headers)
+        .with_body(Some(wasm_bindgen::JsValue::from_str(&payload.to_string())));
+    if let Ok(r) = Request::new_with_init("https://us.i.posthog.com/i/v0/e/", &init) {
+        let _ = Fetch::Request(r).send().await;
+    }
 }
 
 #[event(scheduled)]
