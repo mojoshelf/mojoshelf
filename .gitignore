@@ -3,3 +3,8 @@
 node_modules
 .wrangler
 .dev.vars
+
+# Consumer-side agent-skill installs; see scripts/link-skills.sh
+.agents/
+.claude/skills/
+skills-lock.json

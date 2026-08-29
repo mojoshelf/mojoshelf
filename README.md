@@ -25,3 +25,15 @@ npx skills add mojoshelf/mojoshelf                                  # pick inter
 npx skills add mojoshelf/mojoshelf --skill mojoshelf-consume --yes  # or one directly
 npx skills add mojoshelf/mojoshelf --skill mojoshelf-publish --yes
 ```
+
+`skills/` is the source of truth for both. Working on them in this checkout,
+run `scripts/link-skills.sh` instead of the commands above — it symlinks
+`.claude/skills/<name>` at `skills/<name>`, so the agent loads the live file
+and edits take effect immediately.
+
+Do not run `npx skills add` on this repo from inside this repo. It is the
+consumer-side command: it writes a *copy* of the skill under `.agents/`, plus
+a `skills-lock.json` recording a content hash of that copy. In the authoring
+repo the copy forks from `skills/` on the next edit and silently serves stale
+instructions, and the lock hash is then a hash of the stale copy rather than
+of anything you maintain. Both paths are gitignored.
