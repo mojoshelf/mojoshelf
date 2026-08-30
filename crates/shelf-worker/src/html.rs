@@ -137,8 +137,8 @@ fn page(title: &str, active: &str, body: &str) -> String {
   .tins th:nth-child(1), .tins td:nth-child(1) {{ width: 13%; }}
   .tins th:nth-child(2), .tins td:nth-child(2) {{ width: 7%; }}
   .tins th:nth-child(3), .tins td:nth-child(3) {{ width: 20%; }}
-  .tins th:nth-child(4), .tins td:nth-child(4) {{ width: 10%; white-space: nowrap; }}
-  .tins th:nth-child(5), .tins td:nth-child(5) {{ width: 50%; }}
+  .tins th:nth-child(4), .tins td:nth-child(4) {{ width: 8%; white-space: nowrap; }}
+  .tins th:nth-child(5), .tins td:nth-child(5) {{ width: 52%; }}
   /* Fixed columns cannot grow, so long names break instead of overflowing. */
   .tins td {{ overflow-wrap: anywhere; }}
   th, td {{ text-align: left; padding: .4rem .6rem; border-bottom: 1px solid var(--border); }}
@@ -240,8 +240,10 @@ fn activity_cell(stars: Option<i64>, last_push: Option<&str>) -> String {
             let a = age(p);
             if a.is_empty() {
                 format!("⭐ {s}")
+            } else if a == "today" {
+                format!("⭐ {s}<span class=\"sub\">today</span>")
             } else {
-                format!("⭐ {s} · {a}")
+                format!("⭐ {s}<span class=\"sub\">{a} ago</span>")
             }
         }
         (Some(s), None) => format!("⭐ {s}"),
