@@ -22,6 +22,8 @@ pub struct TinRow {
     pub channel_version: Option<String>,
     pub channel_author: Option<String>,
     pub stars: Option<i64>,
+    pub forks: Option<i64>,
+    pub score: Option<f64>,
     pub last_push: Option<String>,
     pub commits_month: Option<i64>,
     pub commits_year: Option<i64>,
@@ -52,7 +54,7 @@ pub struct AuthorRow {
 
 const TIN_SELECT: &str = "SELECT b.id, b.name, b.url, b.description, b.author_id, b.tags, \
     b.kind, b.channel_version, b.channel_author, \
-    b.stars, b.last_push, b.commits_month, b.commits_year, \
+    b.stars, b.forks, b.score, b.last_push, b.commits_month, b.commits_year, \
     b.prev_url, b.url_changed_at, \
     b.verified_at, b.verified_ok, b.verified_compiler, \
     b.nightly_at, b.nightly_ok, b.nightly_compiler, \
@@ -100,12 +102,31 @@ pub async fn dependency_names(d1: &D1Database, version_id: i64) -> Result<Vec<St
     Ok(rows.into_iter().map(|r| r.name).collect())
 }
 
-pub async fn list_tins(d1: &D1Database, q: &str) -> Result<Vec<TinSummary>> {
+/// Tins ordered by interestingness, most interesting first. A negative
+/// `limit` means no limit, which is what the API, llms.txt and MCP callers
+/// pass; the HTML list pages through it.
+///
+/// Tins whose liveliness has never been refreshed have no score yet and sort
+/// last, alphabetically, rather than jumping to the top as NULL would.
+pub async fn list_tins(
+    d1: &D1Database,
+    q: &str,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<TinSummary>> {
     let pattern = format!("%{q}%");
+    // Built rather than bound: binding a sentinel "no limit" through D1 would
+    // rely on SQLite coercing a bound REAL back to LIMIT -1.
+    let window = if limit < 0 {
+        String::new()
+    } else {
+        format!(" LIMIT {limit} OFFSET {}", offset.max(0))
+    };
     let tins = d1
         .prepare(&format!(
             "{TIN_SELECT} WHERE ?1 = '' OR b.name LIKE ?2 OR b.description LIKE ?2 \
-             OR b.tags LIKE ?2 ORDER BY b.name"
+             OR b.tags LIKE ?2 \
+             ORDER BY b.score IS NULL, b.score DESC, b.name{window}"
         ))
         .bind(&[q.into(), pattern.into()])?
         .all()
@@ -147,6 +168,8 @@ pub async fn list_tins(d1: &D1Database, q: &str) -> Result<Vec<TinSummary>> {
                 },
                 kind: b.kind,
                 stars: b.stars,
+                forks: b.forks,
+                score: b.score,
                 last_push: b.last_push,
                 prev_url: b.prev_url,
                 url_changed_at: b.url_changed_at,
@@ -523,10 +546,31 @@ pub async fn stale_liveliness_tins(d1: &D1Database, limit: usize) -> Result<Vec<
     Ok(rows.into_iter().map(|r| (r.name, r.url)).collect())
 }
 
+/// Total matching tins, for the pager.
+pub async fn count_tins(d1: &D1Database, q: &str) -> Result<i64> {
+    #[derive(Deserialize)]
+    struct Count {
+        n: i64,
+    }
+    let pattern = format!("%{q}%");
+    let row = d1
+        .prepare(
+            "SELECT COUNT(*) AS n FROM tins b WHERE ?1 = '' OR b.name LIKE ?2 \
+             OR b.description LIKE ?2 OR b.tags LIKE ?2",
+        )
+        .bind(&[q.into(), pattern.into()])?
+        .first::<Count>(None)
+        .await
+        .at()?;
+    Ok(row.map(|c| c.n).unwrap_or(0))
+}
+
 pub async fn set_liveliness(
     d1: &D1Database,
     name: &str,
     stars: i64,
+    forks: i64,
+    score: f64,
     last_push: &str,
     commits_month: Option<i64>,
     commits_year: Option<i64>,
@@ -535,6 +579,7 @@ pub async fn set_liveliness(
         "UPDATE tins SET stars = ?2, last_push = ?3, \
          commits_month = COALESCE(?4, commits_month), \
          commits_year = COALESCE(?5, commits_year), \
+         forks = ?6, score = ?7, \
          liveliness_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE name = ?1",
     )
     .bind(&[
@@ -543,6 +588,8 @@ pub async fn set_liveliness(
         last_push.into(),
         commits_month.map(|v| worker::wasm_bindgen::JsValue::from(v as f64)).unwrap_or(worker::wasm_bindgen::JsValue::NULL),
         commits_year.map(|v| worker::wasm_bindgen::JsValue::from(v as f64)).unwrap_or(worker::wasm_bindgen::JsValue::NULL),
+        worker::wasm_bindgen::JsValue::from(forks as f64),
+        worker::wasm_bindgen::JsValue::from(score),
     ])?
     .run()
     .await.at()?;

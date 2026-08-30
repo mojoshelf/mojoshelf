@@ -205,7 +205,7 @@ pub async fn author_page(_req: Request, ctx: RouteContext<()>) -> Result<Respons
     if db::author_by_login(&d1, login).await.at()?.is_none() {
         return Response::error("author not found", 404);
     }
-    let tins: Vec<_> = db::list_tins(&d1, "")
+    let tins: Vec<_> = db::list_tins(&d1, "", -1, 0)
         .await.at()?
         .into_iter()
         .filter(|b| b.author.as_deref() == Some(login.as_str()))

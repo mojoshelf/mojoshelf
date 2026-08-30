@@ -20,6 +20,12 @@ pub struct TinSummary {
     pub kind: String,
     #[serde(default)]
     pub stars: Option<i64>,
+    #[serde(default)]
+    pub forks: Option<i64>,
+    /// Interestingness ranking (stars, forks and recent commit activity),
+    /// recomputed by the sync cron. `None` until the tin has been refreshed.
+    #[serde(default)]
+    pub score: Option<f64>,
     /// ISO timestamp of the repo's last push (GitHub `pushed_at`).
     #[serde(default)]
     pub last_push: Option<String>,

@@ -222,6 +222,7 @@ async fn refresh_liveliness(env: &Env, d1: &worker::D1Database) -> Result<usize>
     #[derive(Deserialize)]
     struct Repo {
         stargazers_count: i64,
+        forks_count: i64,
         pushed_at: String,
     }
     #[derive(Deserialize)]
@@ -251,11 +252,68 @@ async fn refresh_liveliness(env: &Env, d1: &worker::D1Database) -> Result<usize>
             }
             None => (None, None),
         };
-        db::set_liveliness(d1, &name, repo.stargazers_count, &repo.pushed_at, month, year)
-            .await.at()?;
+        let score = interestingness(
+            repo.stargazers_count,
+            repo.forks_count,
+            month,
+            year,
+            &repo.pushed_at,
+        );
+        db::set_liveliness(
+            d1,
+            &name,
+            repo.stargazers_count,
+            repo.forks_count,
+            score,
+            &repo.pushed_at,
+            month,
+            year,
+        )
+        .await
+        .at()?;
         refreshed += 1;
     }
     Ok(refreshed)
+}
+
+/// How interesting a tin is, from its GitHub signals. Ranks the public list.
+///
+/// Each count goes through `ln(1 + n)` first, because the raw numbers live on
+/// very different scales — a registry where the busiest repo has 19 stars but
+/// hundreds of commits a year would otherwise be ranked by commits alone, and
+/// a single runaway repo would bury everything else. Compressed this way, the
+/// weights below mean what they say: a star is worth more than a fork, which
+/// is worth more than a commit.
+///
+/// Recency is a bonus rather than a factor, so a long-dormant but widely used
+/// library still places well, while an active one is pushed up.
+fn interestingness(
+    stars: i64,
+    forks: i64,
+    commits_month: Option<i64>,
+    commits_year: Option<i64>,
+    pushed_at: &str,
+) -> f64 {
+    let ln1p = |n: i64| (1.0 + n.max(0) as f64).ln();
+    let recency = {
+        let parsed = worker::js_sys::Date::parse(pushed_at);
+        if parsed.is_nan() {
+            0.0
+        } else {
+            let days = ((worker::js_sys::Date::now() - parsed) / 86_400_000.0).max(0.0);
+            match days {
+                d if d <= 30.0 => 3.0,
+                d if d <= 90.0 => 1.5,
+                d if d <= 365.0 => 0.5,
+                _ => 0.0,
+            }
+        }
+    };
+    2.0 * ln1p(stars)
+        + 1.5 * ln1p(forks)
+        + 1.2 * ln1p(commits_month.unwrap_or(0))
+        + 0.6 * ln1p(commits_year.unwrap_or(0))
+        + recency
 }
 
 /// Agent cards rebuilt per sync (oldest first, like liveliness). Each

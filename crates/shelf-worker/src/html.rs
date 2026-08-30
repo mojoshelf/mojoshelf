@@ -158,6 +158,8 @@ fn page(title: &str, active: &str, body: &str) -> String {
                font-size: .85rem; margin-bottom: .25rem; }}
   .top-links a {{ color: var(--muted); text-decoration: none; }}
   .top-links a:hover {{ color: var(--accent); }}
+  .pager {{ display: flex; gap: 1rem; align-items: center; margin-top: 1rem;
+           font-size: .9rem; color: var(--muted); }}
   footer {{ margin-top: 2rem; font-size: .8rem; color: var(--muted); }}
 </style>
 {posthog}
@@ -338,14 +340,41 @@ fn tin_table(tins: &[TinSummary]) -> String {
     )
 }
 
-pub fn home(tins: &[TinSummary], q: &str) -> String {
+/// Previous/next links, omitted entirely when everything fits on one page.
+fn pager(q: &str, page: i64, last: i64) -> String {
+    if last <= 1 {
+        return String::new();
+    }
+    let href = |p: i64| {
+        if q.is_empty() {
+            format!("/?page={p}")
+        } else {
+            // Percent-encode for the query string, then escape for the
+            // attribute: a search for "a & b" has to survive both.
+            let encoded = String::from(worker::js_sys::encode_uri_component(q));
+            format!("/?q={}&amp;page={p}", esc(&encoded))
+        }
+    };
+    let link = |p: i64, label: &str| format!("<a href=\"{}\">{label}</a>", href(p));
+    let mut parts = Vec::new();
+    if page > 1 {
+        parts.push(link(page - 1, "← previous"));
+    }
+    parts.push(format!("page {page} of {last}"));
+    if page < last {
+        parts.push(link(page + 1, "next →"));
+    }
+    format!("<p class=\"pager\">{}</p>", parts.join(" · "))
+}
+
+pub fn home(tins: &[TinSummary], page_no: i64, q: &str, last: i64, total: i64) -> String {
     let result_line = if q.is_empty() {
         String::new()
     } else {
         format!(
             "<p>{} tin{} matching <strong>{}</strong> — <a href=\"/\">clear</a></p>",
-            tins.len(),
-            if tins.len() == 1 { "" } else { "s" },
+            total,
+            if total == 1 { "" } else { "s" },
             esc(q),
         )
     };
@@ -358,13 +387,21 @@ New here? See <a href="/getting-started">Getting started</a>.</p>
 <button>Search</button>
 </form>
 {result_line}
-<h2>Tins</h2>
-<p class="install-label">Includes the
+<h2>{heading}</h2>
+<p class="install-label">Ranked by stars, forks and recent commit activity.
+Includes the
 <a href="/community-channel">modular-community channel</a>, mirrored here —
 its packages are badged <span class="tag">channel</span>.</p>
-{table}"#,
+{table}
+{pager}"#,
         q = esc(q),
+        heading = if q.is_empty() && page_no == 1 && last > 1 {
+            format!("Most interesting tins <span class=\"pick-one\">of {total}</span>")
+        } else {
+            "Tins".to_string()
+        },
         table = tin_table(tins),
+        pager = pager(q, page_no, last),
     );
     page("Mojo Shelf", "Tins", &body)
 }

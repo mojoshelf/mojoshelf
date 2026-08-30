@@ -349,10 +349,24 @@ fn query_param(req: &Request, key: &str) -> Option<String> {
     })
 }
 
+/// Tins per page on the public list.
+const PAGE_SIZE: i64 = 20;
+
 async fn home(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let q = query_param(&req, "q").unwrap_or_default();
-    let tins = db::list_tins(&ctx.env.d1("DB")?, &q).await.at()?;
-    Response::from_html(html::home(&tins, &q))
+    let d1 = ctx.env.d1("DB")?;
+    let total = db::count_tins(&d1, &q).await.at()?;
+    // Clamp rather than 404: a stale or hand-edited ?page= lands on the last
+    // page instead of an error.
+    let last = ((total - 1).max(0) / PAGE_SIZE) + 1;
+    let page = query_param(&req, "page")
+        .and_then(|p| p.parse::<i64>().ok())
+        .unwrap_or(1)
+        .clamp(1, last);
+    let tins = db::list_tins(&d1, &q, PAGE_SIZE, (page - 1) * PAGE_SIZE)
+        .await
+        .at()?;
+    Response::from_html(html::home(&tins, page, &q, last, total))
 }
 
 async fn getting_started(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
@@ -381,7 +395,7 @@ async fn tin_page(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
 
 async fn api_list(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let q = query_param(&req, "q").unwrap_or_default();
-    let tins = db::list_tins(&ctx.env.d1("DB")?, &q).await.at()?;
+    let tins = db::list_tins(&ctx.env.d1("DB")?, &q, -1, 0).await.at()?;
     Response::from_json(&tins)
 }
 
@@ -540,7 +554,7 @@ fn text_response(body: String, content_type: &str) -> Result<Response> {
 /// llms.txt: a compact machine-readable index for agents and crawlers —
 /// what mojoshelf is, how to install, one line per tin.
 async fn llms_txt(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let tins = db::list_tins(&ctx.env.d1("DB")?, "").await.at()?;
+    let tins = db::list_tins(&ctx.env.d1("DB")?, "", -1, 0).await.at()?;
     let mut out = String::from(
         "# mojoshelf\n\n\
          > An experimental community registry of reusable Mojo libraries (\"tins\"), \
@@ -659,7 +673,7 @@ async fn admin_page(req: Request, ctx: RouteContext<()>) -> Result<Response> {
         .ok()
         .flatten()
         .unwrap_or_else(|| "unknown".into());
-    let tins = db::list_tins(&ctx.env.d1("DB")?, "").await.at()?;
+    let tins = db::list_tins(&ctx.env.d1("DB")?, "", -1, 0).await.at()?;
     Response::from_html(html::admin(&tins, &email))
 }
 

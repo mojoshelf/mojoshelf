@@ -173,7 +173,7 @@ async fn call_tool(
     let result = match tool {
         "search_tins" => {
             let query = str_arg("query").unwrap_or_default();
-            let tins = db::list_tins(&d1, &query).await.at()?;
+            let tins = db::list_tins(&d1, &query, -1, 0).await.at()?;
             tool_text(render_search(&tins, &query), false)
         }
         "tin_info" => {
