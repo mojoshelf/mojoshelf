@@ -55,6 +55,21 @@ an error.
 | `GITHUB_TOKEN` | GitHub API reads for the liveliness refresh and cards |
 | `GITHUB_CLIENT_SECRET` | GitHub OAuth sign-in on `/authors` |
 | `SESSION_SECRET` | signing author session cookies |
+| `GITHUB_DISPATCH_TOKEN` | triggering a `tin-smoke` run when a tin is published |
+
+`GITHUB_DISPATCH_TOKEN` is separate from `GITHUB_TOKEN` on purpose: this one
+needs **Actions: read and write** on `mojoshelf/mojoshelf`, while the read
+token only ever sees public metadata. Keeping them apart leaves the
+widely-used one powerless. Create a fine-grained PAT (again, lifetime ≤ 366
+days), resource owner `mojoshelf`, only this repository, `Actions: read and
+write`, then:
+
+```sh
+npx wrangler secret put GITHUB_DISPATCH_TOKEN
+```
+
+Without it, publishing still works and simply logs that it skipped the
+dispatch — verification then waits for the weekly sweep, as it used to.
 
 The PostHog project key is not a secret and not a var: it is
 `html::POSTHOG_KEY`, a constant in the source, because it is a public
@@ -113,6 +128,23 @@ curl -s -X POST https://mojoshelf.org/api/sync-channel \
 A phase that fails reports `liveliness ERROR: …` there and files a
 `SyncPhaseError` in PostHog Error Tracking, tagged with the phase. The other
 phases still run: one broken phase does not stop the sync.
+
+## Verification badges
+
+`/badge/<tin>.svg` and `/badge/<tin>/nightly.svg` render from the tin's
+verification record. No record yet means a grey "not verified" — the badge is
+reporting honestly, not failing.
+
+Records are written by the `tin-smoke` workflow: weekly on Mondays at 06:17
+UTC, and on publish, which dispatches a run scoped to the tin just published,
+at most once per tin per day. To force one by hand:
+
+```sh
+gh workflow run tin-smoke.yml --repo mojoshelf/mojoshelf -f only=<tin>
+```
+
+Omit `only` to sweep every tin, which is 3 platforms × 2 channels each and
+takes a while.
 
 ## When scores or activity stop updating
 

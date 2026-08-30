@@ -10,6 +10,7 @@ mod db;
 mod html;
 mod located;
 mod mcp;
+mod smoke;
 
 use crate::located::{split as split_location, Located};
 use serde_json::json;
@@ -542,6 +543,10 @@ async fn api_publish(mut req: Request, ctx: RouteContext<()>) -> Result<Response
         }
     }
     db::insert_version(&d1, tin.id, &body.version, &body.commit_sha, &dep_ids).await.at()?;
+    // Verification badges come from the weekly tin-smoke sweep, so without
+    // this a tin published just after a sweep looks unverified for a week.
+    // Best effort: the publish has already succeeded either way.
+    smoke::request(&ctx.env, &d1, &body.name).await;
     Ok(Response::from_json(&json!({ "ok": true }))?.with_status(201))
 }
 

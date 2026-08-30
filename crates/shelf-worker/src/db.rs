@@ -580,6 +580,40 @@ pub async fn count_tins(d1: &D1Database, q: &str) -> Result<i64> {
     Ok(row.map(|c| c.n).unwrap_or(0))
 }
 
+/// Whether this tin may ask tin-smoke for a run: never asked, or last asked
+/// more than a day ago. Evaluated in SQL so "a day ago" is the database's
+/// clock rather than the isolate's.
+pub async fn smoke_due(d1: &D1Database, name: &str) -> Result<bool> {
+    #[derive(Deserialize)]
+    struct Due {
+        due: i64,
+    }
+    let row = d1
+        .prepare(
+            "SELECT (smoke_requested_at IS NULL \
+                     OR smoke_requested_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-1 day')) \
+                    AS due \
+             FROM tins WHERE name = ?1",
+        )
+        .bind(&[name.into()])?
+        .first::<Due>(None)
+        .await
+        .at()?;
+    Ok(row.map(|r| r.due != 0).unwrap_or(false))
+}
+
+pub async fn mark_smoke_requested(d1: &D1Database, name: &str) -> Result<()> {
+    d1.prepare(
+        "UPDATE tins SET smoke_requested_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') \
+         WHERE name = ?1",
+    )
+    .bind(&[name.into()])?
+    .run()
+    .await
+    .at()?;
+    Ok(())
+}
+
 /// Marks a tin as visited without liveliness data, so it moves to the back of
 /// the stale queue instead of blocking it.
 pub async fn touch_liveliness(d1: &D1Database, name: &str) -> Result<()> {
