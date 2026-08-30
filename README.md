@@ -37,3 +37,8 @@ a `skills-lock.json` recording a content hash of that copy. In the authoring
 repo the copy forks from `skills/` on the next edit and silently serves stale
 instructions, and the lock hash is then a hash of the stale copy rather than
 of anything you maintain. Both paths are gitignored.
+
+## Operations
+
+Running the Worker — secrets, deploys, D1 migrations, and what to check when
+the registry stops updating itself: [OPERATIONS.md](OPERATIONS.md).
