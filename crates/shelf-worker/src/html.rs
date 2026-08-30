@@ -129,11 +129,18 @@ fn page(title: &str, active: &str, body: &str) -> String {
   table {{ border-collapse: collapse; width: 100%; table-layout: auto; }}
   /* Second line of the repository cell: the author who published the tin. */
   .sub {{ display: block; font-size: .8rem; color: var(--muted); font-weight: 400; }}
-  /* Tin list: the four narrow columns size to their content, so description
-     keeps everything left over. Scoped, so the versions table is unaffected. */
-  .tins th:nth-child(-n+4), .tins td:nth-child(-n+4) {{
-    white-space: nowrap; width: 1%; }}
-  .tins th:nth-child(5), .tins td:nth-child(5) {{ width: 99%; white-space: normal; }}
+  /* Tin list: fixed layout, so these widths are honoured exactly. Under the
+     default auto layout a percentage is only a hint and the browser hands
+     leftover space to whichever column it likes — which was starving
+     description, the one column that actually needs the room. */
+  .tins {{ table-layout: fixed; }}
+  .tins th:nth-child(1), .tins td:nth-child(1) {{ width: 13%; }}
+  .tins th:nth-child(2), .tins td:nth-child(2) {{ width: 7%; }}
+  .tins th:nth-child(3), .tins td:nth-child(3) {{ width: 20%; }}
+  .tins th:nth-child(4), .tins td:nth-child(4) {{ width: 10%; white-space: nowrap; }}
+  .tins th:nth-child(5), .tins td:nth-child(5) {{ width: 50%; }}
+  /* Fixed columns cannot grow, so long names break instead of overflowing. */
+  .tins td {{ overflow-wrap: anywhere; }}
   th, td {{ text-align: left; padding: .4rem .6rem; border-bottom: 1px solid var(--border); }}
   code {{ background: var(--code-bg); padding: .1rem .3rem; border-radius: 3px; }}
   pre {{ background: var(--code-bg); padding: .6rem .8rem; border-radius: 6px;
