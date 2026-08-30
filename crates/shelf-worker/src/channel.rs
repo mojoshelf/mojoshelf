@@ -162,21 +162,39 @@ pub async fn sync(env: &Env) -> Result<String> {
 
     let enriched = match enrich(env, &d1).await {
         Ok(n) => n.to_string(),
-        Err(e) => format!("ERROR: {e}"),
+        Err(e) => phase_failed("enrich", e).await,
     };
     let liveliness = match refresh_liveliness(env, &d1).await {
         Ok(n) => n.to_string(),
-        Err(e) => format!("ERROR: {e}"),
+        Err(e) => phase_failed("liveliness", e).await,
     };
     let cards = match refresh_cards(env, &d1).await {
         Ok(n) => n.to_string(),
-        Err(e) => format!("ERROR: {e}"),
+        Err(e) => phase_failed("cards", e).await,
     };
 
     Ok(format!(
         "mirrored {mirrored} channel packages, pruned {pruned}, enriched {enriched}, \
          liveliness {liveliness}, cards {cards}"
     ))
+}
+
+/// A sync phase failed. The other phases still run — one broken phase should
+/// not stop the rest — but the failure is reported rather than folded into the
+/// summary string, where `liveliness ERROR: …` sat inside an otherwise
+/// successful sync and went unnoticed for days.
+async fn phase_failed(phase: &'static str, e: Error) -> String {
+    let raw = e.to_string();
+    let (message, location) = crate::located::split(&raw);
+    crate::posthog_exception(
+        "SyncPhaseError",
+        message.to_string(),
+        location.map(str::to_string),
+        serde_json::json!({ "phase": phase }),
+    )
+    .await;
+    console_log!("channel sync phase {phase} FAILED: {message}");
+    format!("ERROR: {message}")
 }
 
 /// Repos refreshed per sync: 2 GitHub calls each, sized to stay inside the
@@ -199,8 +217,17 @@ async fn github_json<T: for<'de> serde::Deserialize<'de>>(
     let mut res = Fetch::Request(req).send().await.at()?;
     match res.status_code() {
         200 => Ok(Some(res.json().await.at()?)),
-        // 202: stats still computing; 403: rate limited; 404: repo gone.
-        _ => Ok(None),
+        // 202: stats still computing. 404: repo gone or private. Both are
+        // ordinary outcomes for a particular repo, so the caller skips it.
+        202 | 404 => Ok(None),
+        // Everything else is a problem with the request itself rather than
+        // with this repo — above all 401, which is what an expired
+        // GITHUB_TOKEN returns for every call, public repos included.
+        // Folding these into None made a broken token look like a registry
+        // where nothing ever needed refreshing.
+        status => Err(Error::RustError(format!(
+            "github returned {status} for {url}"
+        ))),
     }
 }
 
@@ -233,8 +260,11 @@ async fn refresh_liveliness(env: &Env, d1: &worker::D1Database) -> Result<usize>
     for (name, url) in db::stale_liveliness_tins(d1, LIVELINESS_BATCH).await.at()? {
         let Some(or) = owner_repo(&url) else { continue };
         let url = format!("https://api.github.com/repos/{or}");
-        let Some(repo) = github_json::<Repo>(env, &url).await.at()?
-        else {
+        let Some(repo) = github_json::<Repo>(env, &url).await.at()? else {
+            // Gone or private. Stamp it anyway: the stale queue puts unrefreshed
+            // tins first, so a repo that always 404s would otherwise sit at the
+            // head of every batch and starve every other tin behind it.
+            db::touch_liveliness(d1, &name).await.at()?;
             continue;
         };
         // 52 weekly commit counts, newest last; one call covers both windows.

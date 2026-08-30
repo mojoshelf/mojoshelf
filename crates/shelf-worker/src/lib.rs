@@ -151,7 +151,7 @@ async fn posthog_capture(event: &'static str, distinct_id: String, properties: s
 /// would walk (via `backtrace`/`findshlibs`) do not exist. `kind` is therefore
 /// what issues group by — keep it coarse and stable — and `context` carries
 /// the locator, such as the route that failed.
-async fn posthog_exception(
+pub(crate) async fn posthog_exception(
     kind: &'static str,
     message: String,
     location: Option<String>,

@@ -580,6 +580,20 @@ pub async fn count_tins(d1: &D1Database, q: &str) -> Result<i64> {
     Ok(row.map(|c| c.n).unwrap_or(0))
 }
 
+/// Marks a tin as visited without liveliness data, so it moves to the back of
+/// the stale queue instead of blocking it.
+pub async fn touch_liveliness(d1: &D1Database, name: &str) -> Result<()> {
+    d1.prepare(
+        "UPDATE tins SET liveliness_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') \
+         WHERE name = ?1",
+    )
+    .bind(&[name.into()])?
+    .run()
+    .await
+    .at()?;
+    Ok(())
+}
+
 pub async fn set_liveliness(
     d1: &D1Database,
     name: &str,
