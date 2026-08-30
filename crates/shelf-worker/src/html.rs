@@ -401,7 +401,7 @@ pub fn home(tins: &[TinSummary], page_no: i64, q: &str, last: i64, total: i64) -
 <p>A registry of reusable Mojo tins, installed as pixi source dependencies or git submodules.
 New here? See <a href="/getting-started">Getting started</a>.</p>
 <form class="search" method="get" action="/">
-<input type="search" name="q" value="{q}" placeholder="Search name, description, tags, org…">
+<input type="search" name="q" value="{q}" placeholder="Search name, description, tags, org, author…">
 <button>Search</button>
 </form>
 {result_line}

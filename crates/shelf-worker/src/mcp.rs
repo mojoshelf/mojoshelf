@@ -115,8 +115,8 @@ fn tool_definitions() -> Value {
         {
             "name": "search_tins",
             "description": "Search the mojoshelf registry of reusable Mojo \
-                libraries (\"tins\") by name, description, tag, or GitHub \
-                org. An empty \
+                libraries (\"tins\") by name, description, tag, GitHub org, \
+                or author. An empty \
                 query lists every tin. Returns package name, kind (source tin \
                 or modular-community channel binary), latest version, \
                 description, tags, and build-verification status. If nothing \

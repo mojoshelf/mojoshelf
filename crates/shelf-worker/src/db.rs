@@ -64,12 +64,17 @@ const TIN_SELECT: &str = "SELECT b.id, b.name, b.url, b.description, b.author_id
 /// disagree with the rows it pages. `?1` is the raw query, `?2` the `%q%`
 /// pattern.
 ///
-/// The last term matches the GitHub org (and repo) inside the URL. It is
-/// anchored on a leading slash so a query hits a path segment —
-/// `millfolio` finds `github.com/millfolio/csv.mojo.git` — rather than
-/// matching any substring of the URL.
+/// The URL term matches the GitHub org (and repo). It is anchored on a
+/// leading slash so a query hits a path segment — `millfolio` finds
+/// `github.com/millfolio/csv.mojo.git` — rather than any substring of the URL.
+///
+/// Author is matched from both places it lives: `channel_author` for mirrored
+/// modular-community packages, and the joined login for published tins. So a
+/// maintainer is found even where they differ from the org, as `sstadick`
+/// does from `ExtraMojo`. Any query using this must join `authors` as `a`.
 const TIN_SEARCH: &str = "?1 = '' OR b.name LIKE ?2 OR b.description LIKE ?2 \
-    OR b.tags LIKE ?2 OR b.url LIKE '%/' || ?1 || '%'";
+    OR b.tags LIKE ?2 OR b.url LIKE '%/' || ?1 || '%' \
+    OR b.channel_author LIKE ?2 OR a.github_login LIKE ?2";
 
 #[derive(Deserialize)]
 pub struct VersionRow {
@@ -564,7 +569,10 @@ pub async fn count_tins(d1: &D1Database, q: &str) -> Result<i64> {
     }
     let pattern = format!("%{q}%");
     let row = d1
-        .prepare(&format!("SELECT COUNT(*) AS n FROM tins b WHERE {TIN_SEARCH}"))
+        .prepare(&format!(
+            "SELECT COUNT(*) AS n FROM tins b \
+             LEFT JOIN authors a ON a.id = b.author_id WHERE {TIN_SEARCH}"
+        ))
         .bind(&[q.into(), pattern.into()])?
         .first::<Count>(None)
         .await
