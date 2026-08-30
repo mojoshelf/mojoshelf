@@ -165,7 +165,7 @@ pub async fn sync(env: &Env) -> Result<String> {
         Err(e) => phase_failed("enrich", e).await,
     };
     let liveliness = match refresh_liveliness(env, &d1).await {
-        Ok(n) => n.to_string(),
+        Ok(n) => n,
         Err(e) => phase_failed("liveliness", e).await,
     };
     let cards = match refresh_cards(env, &d1).await {
@@ -225,9 +225,19 @@ async fn github_json<T: for<'de> serde::Deserialize<'de>>(
         // GITHUB_TOKEN returns for every call, public repos included.
         // Folding these into None made a broken token look like a registry
         // where nothing ever needed refreshing.
-        status => Err(Error::RustError(format!(
-            "github returned {status} for {url}"
-        ))),
+        // GitHub explains itself in the body — "API rate limit exceeded" reads
+        // very differently from "Resource not accessible by personal access
+        // token" — and the two need opposite fixes.
+        status => {
+            let detail = res
+                .text()
+                .await
+                .map(|b| b.chars().take(180).collect::<String>())
+                .unwrap_or_default();
+            Err(Error::RustError(format!(
+                "github returned {status} for {url}: {detail}"
+            )))
+        }
     }
 }
 
@@ -245,7 +255,7 @@ fn owner_repo(url: &str) -> Option<String> {
 /// Stars, last push, and commit counts (last month / last year) for the
 /// stalest GitHub-hosted tins. Rate-limit friendly: 403s just leave the
 /// batch for the next cycle; set GITHUB_TOKEN (worker secret) for 5000/hr.
-async fn refresh_liveliness(env: &Env, d1: &worker::D1Database) -> Result<usize> {
+async fn refresh_liveliness(env: &Env, d1: &worker::D1Database) -> Result<String> {
     #[derive(Deserialize)]
     struct Repo {
         stargazers_count: i64,
@@ -257,15 +267,27 @@ async fn refresh_liveliness(env: &Env, d1: &worker::D1Database) -> Result<usize>
         all: Vec<i64>,
     }
     let mut refreshed = 0usize;
+    let mut failures: Vec<String> = Vec::new();
     for (name, url) in db::stale_liveliness_tins(d1, LIVELINESS_BATCH).await.at()? {
         let Some(or) = owner_repo(&url) else { continue };
         let url = format!("https://api.github.com/repos/{or}");
-        let Some(repo) = github_json::<Repo>(env, &url).await.at()? else {
-            // Gone or private. Stamp it anyway: the stale queue puts unrefreshed
-            // tins first, so a repo that always 404s would otherwise sit at the
-            // head of every batch and starve every other tin behind it.
-            db::touch_liveliness(d1, &name).await.at()?;
-            continue;
+        // Whatever happens to one repo, stamp it and move on. The stale queue
+        // puts unrefreshed tins first, so a repo this token cannot read would
+        // otherwise sit at the head of every batch and starve the rest — which
+        // is exactly what froze the refresh once a batch of unreadable repos
+        // was published.
+        let repo = match github_json::<Repo>(env, &url).await {
+            Ok(Some(repo)) => repo,
+            Ok(None) => {
+                db::touch_liveliness(d1, &name).await.at()?;
+                continue;
+            }
+            Err(e) => {
+                db::touch_liveliness(d1, &name).await.at()?;
+                console_log!("liveliness {name}: {e}");
+                failures.push(format!("{name}: {e}"));
+                continue;
+            }
         };
         // 52 weekly commit counts, newest last; one call covers both windows.
         let (month, year) = match github_json::<Participation>(
@@ -303,7 +325,21 @@ async fn refresh_liveliness(env: &Env, d1: &worker::D1Database) -> Result<usize>
         .at()?;
         refreshed += 1;
     }
-    Ok(refreshed)
+    // Nothing readable at all is a configuration problem, not a quiet day:
+    // surface it. A partial failure is reported in the summary instead, so one
+    // unreadable repo does not fail the whole sync.
+    if refreshed == 0 && !failures.is_empty() {
+        return Err(Error::RustError(format!(
+            "all {} repos failed, first: {}",
+            failures.len(),
+            failures[0]
+        )));
+    }
+    Ok(if failures.is_empty() {
+        refreshed.to_string()
+    } else {
+        format!("{refreshed} ({} failed, first: {})", failures.len(), failures[0])
+    })
 }
 
 /// How interesting a tin is, from its GitHub signals. Ranks the public list.
