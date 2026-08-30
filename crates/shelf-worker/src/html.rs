@@ -126,7 +126,14 @@ fn page(title: &str, active: &str, body: &str) -> String {
   form.search button {{ padding: .45rem .9rem; border: 1px solid var(--accent);
                        background: var(--accent); color: #fff; border-radius: 6px;
                        cursor: pointer; }}
-  table {{ border-collapse: collapse; width: 100%; }}
+  table {{ border-collapse: collapse; width: 100%; table-layout: auto; }}
+  /* Second line of the repository cell: the author who published the tin. */
+  .sub {{ display: block; font-size: .8rem; color: var(--muted); font-weight: 400; }}
+  /* Tin list: the four narrow columns size to their content, so description
+     keeps everything left over. Scoped, so the versions table is unaffected. */
+  .tins th:nth-child(-n+4), .tins td:nth-child(-n+4) {{
+    white-space: nowrap; width: 1%; }}
+  .tins th:nth-child(5), .tins td:nth-child(5) {{ width: 99%; white-space: normal; }}
   th, td {{ text-align: left; padding: .4rem .6rem; border-bottom: 1px solid var(--border); }}
   code {{ background: var(--code-bg); padding: .1rem .3rem; border-radius: 3px; }}
   pre {{ background: var(--code-bg); padding: .6rem .8rem; border-radius: 6px;
@@ -307,23 +314,24 @@ fn tin_table(tins: &[TinSummary]) -> String {
             } else {
                 ""
             };
+            let author = if b.kind == "channel" {
+                match b.author.as_deref() {
+                    Some(a) => format!(
+                        "<a href=\"https://github.com/{}\">{}</a>",
+                        esc(a),
+                        esc(a)
+                    ),
+                    None => "modular-community".to_string(),
+                }
+            } else {
+                author_link(b.author.as_deref())
+            };
             format!(
                 "<tr><td><a href=\"/tins/{name}\"><code>{name}</code></a>{badge}</td>\
-                 <td>{}</td><td>{}</td>\
-                 <td><a href=\"{}\">{}</a>{repo_flag}</td><td>{activity}</td><td>{}{}</td></tr>",
+                 <td>{}</td>\
+                 <td><a href=\"{}\">{}</a>{repo_flag}<span class=\"sub\">{author}</span></td>\
+                 <td>{activity}</td><td>{}{}</td></tr>",
                 b.latest_version.as_deref().map(esc).unwrap_or_else(|| "—".into()),
-                if b.kind == "channel" {
-                    match b.author.as_deref() {
-                        Some(a) => format!(
-                            "<a href=\"https://github.com/{}\">{}</a>",
-                            esc(a),
-                            esc(a)
-                        ),
-                        None => "modular-community".to_string(),
-                    }
-                } else {
-                    author_link(b.author.as_deref())
-                },
                 esc(&b.url),
                 esc(&short_repo(&b.url)),
                 esc(b.description.as_deref().unwrap_or("")),
@@ -335,8 +343,9 @@ fn tin_table(tins: &[TinSummary]) -> String {
         })
         .collect();
     format!(
-        "<table><tr><th>tin</th><th>latest</th><th>author</th>\
-         <th>repository</th><th>activity</th><th>description</th></tr>{rows}</table>"
+        "<table class=\"tins\"><tr><th>tin</th><th>latest</th>\
+         <th>repository<span class=\"sub\">author</span></th>\
+         <th>activity</th><th>description</th></tr>{rows}</table>"
     )
 }
 
