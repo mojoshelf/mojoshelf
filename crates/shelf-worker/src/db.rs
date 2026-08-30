@@ -60,6 +60,17 @@ const TIN_SELECT: &str = "SELECT b.id, b.name, b.url, b.description, b.author_id
     b.nightly_at, b.nightly_ok, b.nightly_compiler, \
     a.github_login AS author FROM tins b LEFT JOIN authors a ON a.id = b.author_id";
 
+/// Search predicate, shared by the list and its count so the pager can never
+/// disagree with the rows it pages. `?1` is the raw query, `?2` the `%q%`
+/// pattern.
+///
+/// The last term matches the GitHub org (and repo) inside the URL. It is
+/// anchored on a leading slash so a query hits a path segment —
+/// `millfolio` finds `github.com/millfolio/csv.mojo.git` — rather than
+/// matching any substring of the URL.
+const TIN_SEARCH: &str = "?1 = '' OR b.name LIKE ?2 OR b.description LIKE ?2 \
+    OR b.tags LIKE ?2 OR b.url LIKE '%/' || ?1 || '%'";
+
 #[derive(Deserialize)]
 pub struct VersionRow {
     pub id: i64,
@@ -124,8 +135,7 @@ pub async fn list_tins(
     };
     let tins = d1
         .prepare(&format!(
-            "{TIN_SELECT} WHERE ?1 = '' OR b.name LIKE ?2 OR b.description LIKE ?2 \
-             OR b.tags LIKE ?2 \
+            "{TIN_SELECT} WHERE {TIN_SEARCH} \
              ORDER BY b.score IS NULL, b.score DESC, b.name{window}"
         ))
         .bind(&[q.into(), pattern.into()])?
@@ -554,10 +564,7 @@ pub async fn count_tins(d1: &D1Database, q: &str) -> Result<i64> {
     }
     let pattern = format!("%{q}%");
     let row = d1
-        .prepare(
-            "SELECT COUNT(*) AS n FROM tins b WHERE ?1 = '' OR b.name LIKE ?2 \
-             OR b.description LIKE ?2 OR b.tags LIKE ?2",
-        )
+        .prepare(&format!("SELECT COUNT(*) AS n FROM tins b WHERE {TIN_SEARCH}"))
         .bind(&[q.into(), pattern.into()])?
         .first::<Count>(None)
         .await
