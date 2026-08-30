@@ -201,20 +201,33 @@ async fn phase_failed(phase: &'static str, e: Error) -> String {
 /// Workers subrequest cap next to the mirror + enrichment fetches.
 const LIVELINESS_BATCH: usize = 10;
 
+async fn github_fetch(env: &Env, url: &str, authenticated: bool) -> Result<Response> {
+    let headers = Headers::new();
+    headers.set("User-Agent", "mojoshelf-sync")?;
+    headers.set("Accept", "application/vnd.github+json")?;
+    if authenticated {
+        if let Ok(token) = env.secret("GITHUB_TOKEN") {
+            headers.set("Authorization", &format!("Bearer {}", token.to_string()))?;
+        }
+    }
+    let mut init = RequestInit::new();
+    init.with_headers(headers);
+    Fetch::Request(Request::new_with_init(url, &init)?).send().await
+}
+
 async fn github_json<T: for<'de> serde::Deserialize<'de>>(
     env: &Env,
     url: &str,
 ) -> Result<Option<T>> {
-    let mut headers = Headers::new();
-    headers.set("User-Agent", "mojoshelf-sync")?;
-    headers.set("Accept", "application/vnd.github+json")?;
-    if let Ok(token) = env.secret("GITHUB_TOKEN") {
-        headers.set("Authorization", &format!("Bearer {}", token.to_string()))?;
+    let mut res = github_fetch(env, url, true).await.at()?;
+    // An org can refuse the token on policy grounds rather than because the
+    // repo is out of reach — labelrefinery rejects fine-grained tokens whose
+    // lifetime exceeds 366 days, which 403s every one of its public repos. The
+    // registry indexes other people's orgs and cannot satisfy each one's
+    // policy, so fall back to an anonymous read, which those repos allow.
+    if matches!(res.status_code(), 401 | 403) {
+        res = github_fetch(env, url, false).await.at()?;
     }
-    let mut init = RequestInit::new();
-    init.with_headers(headers);
-    let req = Request::new_with_init(url, &init)?;
-    let mut res = Fetch::Request(req).send().await.at()?;
     match res.status_code() {
         200 => Ok(Some(res.json().await.at()?)),
         // 202: stats still computing. 404: repo gone or private. Both are
