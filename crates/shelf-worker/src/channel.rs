@@ -201,6 +201,17 @@ async fn phase_failed(phase: &'static str, e: Error) -> String {
 /// Workers subrequest cap next to the mirror + enrichment fetches.
 const LIVELINESS_BATCH: usize = 10;
 
+/// "403: {json message}", truncated — GitHub explains refusals in the body.
+async fn describe(res: &mut Response) -> String {
+    let status = res.status_code();
+    let body = res
+        .text()
+        .await
+        .map(|b| b.chars().take(160).collect::<String>())
+        .unwrap_or_default();
+    format!("{status}: {body}")
+}
+
 async fn github_fetch(env: &Env, url: &str, authenticated: bool) -> Result<Response> {
     let headers = Headers::new();
     headers.set("User-Agent", "mojoshelf-sync")?;
@@ -224,8 +235,14 @@ async fn github_json<T: for<'de> serde::Deserialize<'de>>(
     // repo is out of reach — labelrefinery rejects fine-grained tokens whose
     // lifetime exceeds 366 days, which 403s every one of its public repos. The
     // registry indexes other people's orgs and cannot satisfy each one's
-    // policy, so fall back to an anonymous read, which those repos allow.
+    // policy, so fall back to an anonymous read.
+    //
+    // The fallback is best-effort: a Worker's egress IP is shared, so the
+    // anonymous 60/hr budget is usually spent. Its failure is therefore the
+    // less interesting one, and the token's rejection is kept for the report.
+    let mut rejected = None;
     if matches!(res.status_code(), 401 | 403) {
+        rejected = Some(describe(&mut res).await);
         res = github_fetch(env, url, false).await.at()?;
     }
     match res.status_code() {
@@ -241,15 +258,17 @@ async fn github_json<T: for<'de> serde::Deserialize<'de>>(
         // GitHub explains itself in the body — "API rate limit exceeded" reads
         // very differently from "Resource not accessible by personal access
         // token" — and the two need opposite fixes.
-        status => {
-            let detail = res
-                .text()
-                .await
-                .map(|b| b.chars().take(180).collect::<String>())
-                .unwrap_or_default();
-            Err(Error::RustError(format!(
-                "github returned {status} for {url}: {detail}"
-            )))
+        _ => {
+            let anon = describe(&mut res).await;
+            Err(Error::RustError(match rejected {
+                // Lead with why the token was refused: that is the fixable
+                // half, and the anonymous retry is expected to be throttled.
+                Some(rejected) => format!(
+                    "github refused the token for {url}: {rejected} \
+                     (anonymous retry also failed: {anon})"
+                ),
+                None => format!("github returned {anon} for {url}"),
+            }))
         }
     }
 }
