@@ -388,17 +388,25 @@ New here? See <a href="/getting-started">Getting started</a>.</p>
 </form>
 {result_line}
 <h2>{heading}</h2>
-<p class="install-label">Ranked by stars, forks and recent commit activity.
-Includes the
+<p class="install-label">{ranking}Includes the
 <a href="/community-channel">modular-community channel</a>, mirrored here —
 its packages are badged <span class="tag">channel</span>.</p>
 {table}
 {pager}"#,
         q = esc(q),
-        heading = if q.is_empty() && page_no == 1 && last > 1 {
+        // Scores arrive in cron batches, so until the first refresh lands the
+        // list is still alphabetical — don't claim a ranking it doesn't have.
+        heading = if q.is_empty() && page_no == 1 && last > 1
+            && tins.first().is_some_and(|t| t.score.is_some())
+        {
             format!("Most interesting tins <span class=\"pick-one\">of {total}</span>")
         } else {
             "Tins".to_string()
+        },
+        ranking = if tins.first().is_some_and(|t| t.score.is_some()) {
+            "Ranked by stars, forks and recent commit activity.\n"
+        } else {
+            ""
         },
         table = tin_table(tins),
         pager = pager(q, page_no, last),
