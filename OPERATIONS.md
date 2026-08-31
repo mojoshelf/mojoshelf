@@ -144,7 +144,14 @@ gh workflow run tin-smoke.yml --repo mojoshelf/mojoshelf -f only=<tin>
 ```
 
 Omit `only` to sweep every tin, which is 3 platforms × 2 channels each and
-takes a while.
+takes a while. Note `only` takes the **tin** name as the registry knows it
+(`iceberg-rs-mojo`), not the repository name (`iceberg-rs.mojo`); a mismatch
+runs jobs that report nothing.
+
+Each result records the run it came from, so the tin page links "run log"
+straight to it. Verifications made before that was recorded link to the
+workflow history instead, since a workflow cannot be filtered per tin from a
+URL.
 
 ## When scores or activity stop updating
 

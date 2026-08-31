@@ -454,6 +454,15 @@ fn liveliness_line(d: &shelf_core::TinDetail) -> String {
 const SMOKE_HISTORY: &str =
     "https://github.com/mojoshelf/mojoshelf/actions/workflows/tin-smoke.yml";
 
+/// Link to the run behind a verdict, or to the workflow's history when the
+/// verification predates run-url recording.
+fn run_link(url: Option<&str>) -> String {
+    match url {
+        Some(url) => format!(" — <a href=\"{}\">run log</a>", esc(url)),
+        None => format!(" — <a href=\"{SMOKE_HISTORY}\">history</a>"),
+    }
+}
+
 /// "✓ consumer smoke build passed…" line from the weekly tin-smoke run.
 fn verification_line(d: &shelf_core::TinDetail) -> String {
     let when = |at: &str| {
@@ -467,12 +476,6 @@ fn verification_line(d: &shelf_core::TinDetail) -> String {
     // "failing" is only actionable if the logs are one click away, so link the
     // run behind the verdict — and the workflow's history when there is no run
     // recorded, which is every verification from before it was stored.
-    let run = |url: Option<&str>| match url {
-        Some(url) => format!(" — <a href=\"{}\">run log</a>", esc(url)),
-        None => format!(
-            " — <a href=\"{SMOKE_HISTORY}\">history</a>",
-        ),
-    };
     match (d.verified_ok, d.verified_at.as_deref()) {
         (Some(true), Some(at)) => {
             let compiler = d
@@ -483,13 +486,13 @@ fn verification_line(d: &shelf_core::TinDetail) -> String {
             format!(
                 "<p class=\"install-label\">✓ consumer smoke build passed{compiler} — checked {}{}</p>",
                 when(at),
-                run(d.verified_run_url.as_deref()),
+                run_link(d.verified_run_url.as_deref()),
             )
         }
         (Some(false), Some(at)) => format!(
             "<p class=\"install-label\">✗ consumer smoke build failing (checked {}){}</p>",
             when(at),
-            run(d.verified_run_url.as_deref()),
+            run_link(d.verified_run_url.as_deref()),
         ),
         _ => String::new(),
     }
@@ -511,12 +514,15 @@ fn nightly_line(d: &shelf_core::TinDetail) -> String {
                 .as_deref()
                 .map(|c| format!(" with mojo-compiler {}", esc(c)))
                 .unwrap_or_default();
+            let link = run_link(d.nightly_run_url.as_deref());
             if ok {
                 format!(
-                    "<p class=\"install-label\">✓ mojo nightly build passing{compiler} — checked {when}</p>"
+                    "<p class=\"install-label\">✓ mojo nightly build passing{compiler} — checked {when}{link}</p>"
                 )
             } else {
-                format!("<p class=\"install-label\">✗ mojo nightly build failing (checked {when})</p>")
+                format!(
+                    "<p class=\"install-label\">✗ mojo nightly build failing (checked {when}){link}</p>"
+                )
             }
         }
         _ => String::new(),
