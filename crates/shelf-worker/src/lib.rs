@@ -15,7 +15,7 @@ mod smoke;
 use crate::located::{split as split_location, Located};
 use serde_json::json;
 use shelf_core::{is_full_sha, PublishRequest, ResolvedTin};
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use worker::*;
 
 #[event(fetch)]
@@ -415,7 +415,10 @@ async fn api_resolve(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let want = query_param(&req, "version");
     let d1 = ctx.env.d1("DB")?;
 
-    let mut out: Vec<ResolvedTin> = Vec::new();
+    // Collected first, then ordered dependencies-first below.
+    let mut found: HashMap<String, ResolvedTin> = HashMap::new();
+    let mut deps_of: HashMap<String, Vec<String>> = HashMap::new();
+    let root = name.clone();
     let mut visited: HashSet<String> = HashSet::new();
     let mut queue: VecDeque<(String, Option<String>)> = VecDeque::new();
     queue.push_back((name, want));
@@ -430,15 +433,18 @@ async fn api_resolve(req: Request, ctx: RouteContext<()>) -> Result<Response> {
         if tin.kind == "channel" {
             // Binary channel package: the conda solver owns it (and its
             // dependency graph) — a single unpinned entry.
-            out.push(ResolvedTin {
-                version: tin.channel_version.clone().unwrap_or_default(),
-                name: tin.name,
-                url: tin.url,
-                commit_sha: String::new(),
-                kind: "channel".into(),
-                prev_url: tin.prev_url,
-                url_changed_at: tin.url_changed_at,
-            });
+            found.insert(
+                tin.name.clone(),
+                ResolvedTin {
+                    version: tin.channel_version.clone().unwrap_or_default(),
+                    name: tin.name,
+                    url: tin.url,
+                    commit_sha: String::new(),
+                    kind: "channel".into(),
+                    prev_url: tin.prev_url,
+                    url_changed_at: tin.url_changed_at,
+                },
+            );
             continue;
         }
         let versions = db::versions_of(&d1, tin.id).await.at()?;
@@ -454,18 +460,55 @@ async fn api_resolve(req: Request, ctx: RouteContext<()>) -> Result<Response> {
             };
             return error_json(&msg, 404);
         };
-        for dep in db::dependency_names(&d1, chosen.id).await.at()? {
-            queue.push_back((dep, None));
+        let names = db::dependency_names(&d1, chosen.id).await.at()?;
+        for dep in &names {
+            queue.push_back((dep.clone(), None));
         }
-        out.push(ResolvedTin {
-            name: tin.name,
-            url: tin.url,
-            version: chosen.version.clone(),
-            commit_sha: chosen.commit_sha.clone(),
-            kind: "source".into(),
-            prev_url: tin.prev_url,
-            url_changed_at: tin.url_changed_at,
-        });
+        deps_of.insert(tin.name.clone(), names);
+        found.insert(
+            tin.name.clone(),
+            ResolvedTin {
+                name: tin.name,
+                url: tin.url,
+                version: chosen.version.clone(),
+                commit_sha: chosen.commit_sha.clone(),
+                kind: "source".into(),
+                prev_url: tin.prev_url,
+                url_changed_at: tin.url_changed_at,
+            },
+        );
+    }
+
+    // Dependencies before the tins that need them. `pixi add` solves the
+    // environment on every call, so a tin added before its dependencies fails
+    // to solve — which is what an install set is for. Submodule mode does not
+    // care about order, so ordering here costs it nothing.
+    //
+    // Post-order depth-first walk from the requested tin. `scheduled` guards
+    // the traversal, so a dependency cycle terminates instead of looping.
+    let mut out: Vec<ResolvedTin> = Vec::new();
+    let mut emitted: HashSet<String> = HashSet::new();
+    let mut scheduled: HashSet<String> = HashSet::new();
+    let mut stack: Vec<(String, bool)> = vec![(root, false)];
+    while let Some((tin_name, expanded)) = stack.pop() {
+        if expanded {
+            if emitted.insert(tin_name.clone()) {
+                if let Some(tin) = found.remove(&tin_name) {
+                    out.push(tin);
+                }
+            }
+            continue;
+        }
+        if !scheduled.insert(tin_name.clone()) {
+            continue;
+        }
+        let deps = deps_of.get(&tin_name).cloned().unwrap_or_default();
+        stack.push((tin_name, true));
+        for dep in deps {
+            if !scheduled.contains(&dep) {
+                stack.push((dep, false));
+            }
+        }
     }
     Response::from_json(&out)
 }
