@@ -54,7 +54,53 @@ window.addEventListener('DOMContentLoaded', function () {{
     )
 }
 
+/// The first `n` words of `text`, ellipsised when that is not all of it.
+///
+/// Used to put a tin's own words in its `<title>`, which is what a link
+/// preview shows: "parquet-mojo" alone tells a reader nothing they did not
+/// already know from the URL.
+fn first_words(text: &str, n: usize) -> String {
+    let mut words = text.split_whitespace();
+    let head: Vec<&str> = words.by_ref().take(n).collect();
+    let mut out = head.join(" ");
+    if words.next().is_some() {
+        // Trailing punctuation before an ellipsis reads as a typo.
+        out = out
+            .trim_end_matches([',', ';', ':', '.', '—', '-'])
+            .to_string();
+        out.push('…');
+    }
+    out
+}
+
+/// A tin page's `<title>` and `og:description`: its name, then as much of its
+/// description as a preview will show.
+fn tin_meta(d: &shelf_core::TinDetail) -> (String, String) {
+    let description = d
+        .description
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    match description {
+        Some(desc) => (
+            format!("{} — {}", d.name, first_words(desc, 20)),
+            desc.to_string(),
+        ),
+        None => (
+            format!("Mojo Shelf — {}", d.name),
+            DEFAULT_DESCRIPTION.to_string(),
+        ),
+    }
+}
+
+const DEFAULT_DESCRIPTION: &str =
+    "An experimental community registry of reusable Mojo libraries (tins).";
+
 fn page(title: &str, active: &str, body: &str) -> String {
+    page_described(title, DEFAULT_DESCRIPTION, active, body)
+}
+
+fn page_described(title: &str, description: &str, active: &str, body: &str) -> String {
     let item = |href: &str, label: &str| {
         let class = if label == active {
             " class=\"active\""
@@ -82,7 +128,7 @@ fn page(title: &str, active: &str, body: &str) -> String {
 <meta name="description" content="mojoshelf — an experimental community registry of reusable Mojo libraries (tins), installed as pixi source dependencies or git submodules. Not affiliated with Modular.">
 <meta property="og:site_name" content="Mojo Shelf">
 <meta property="og:title" content="{title}">
-<meta property="og:description" content="An experimental community registry of reusable Mojo libraries (tins).">
+<meta property="og:description" content="{description}">
 <title>{title}</title>
 <style>
   :root {{
@@ -201,6 +247,10 @@ Anonymous usage analytics via PostHog, proxied first-party: no cookies, no cross
 {copy_script}
 </body>
 </html>"#,
+        // Escaped here rather than at the call sites: a tin's description now
+        // reaches the title and the og: tags, and it is arbitrary text.
+        title = esc(title),
+        description = esc(description),
         copy_script = COPY_SCRIPT,
     )
 }
@@ -629,7 +679,8 @@ so.</p>"#,
             warning =
                 url_change_warning(&d.url, d.prev_url.as_deref(), d.url_changed_at.as_deref()),
         );
-        return page(&format!("Mojo Shelf — {}", d.name), "Tins", &body);
+        let (title, description) = tin_meta(d);
+        return page_described(&title, &description, "Tins", &body);
     }
     let tags: String = d
         .tags
@@ -740,7 +791,8 @@ shelf extension installed once:</p>
         nightly = nightly_line(d),
         badge_md = badge_section(d),
     );
-    page(&format!("Mojo Shelf — {}", d.name), "Tins", &body)
+    let (title, description) = tin_meta(d);
+    page_described(&title, &description, "Tins", &body)
 }
 
 pub fn author(login: &str, tins: &[TinSummary]) -> String {
@@ -1137,4 +1189,51 @@ pub fn admin(tins: &[TinSummary], email: &str) -> String {
         email = esc(email),
     );
     page("Mojo Shelf admin", "Tins", &body)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn first_words_truncates_only_when_it_must() {
+        assert_eq!(super::first_words("one two three", 20), "one two three");
+        assert_eq!(super::first_words("a b c d", 2), "a b…");
+        assert_eq!(
+            super::first_words("footer, pages, more", 2),
+            "footer, pages…"
+        );
+        assert_eq!(super::first_words("   ", 20), "");
+    }
+
+    #[test]
+    fn tin_title_leads_with_the_name_then_its_own_words() {
+        let mut d = shelf_core::TinDetail {
+            name: "parquet-mojo".into(),
+            description: Some("Native pure-Mojo Apache Parquet reader.".into()),
+            ..Default::default()
+        };
+        let (title, description) = super::tin_meta(&d);
+        assert_eq!(
+            title,
+            "parquet-mojo — Native pure-Mojo Apache Parquet reader."
+        );
+        assert_eq!(description, "Native pure-Mojo Apache Parquet reader.");
+
+        d.description = None;
+        let (title, description) = super::tin_meta(&d);
+        assert_eq!(title, "Mojo Shelf — parquet-mojo");
+        assert!(description.starts_with("An experimental"));
+    }
+
+    #[test]
+    fn a_description_cannot_break_out_of_the_title_or_og_tags() {
+        let d = shelf_core::TinDetail {
+            name: "x".into(),
+            description: Some("a \" onload=x <b>&".into()),
+            ..Default::default()
+        };
+        let (title, _) = super::tin_meta(&d);
+        let html = super::page_described(&title, &title, "Tins", "");
+        assert!(!html.contains("onload=x <b>"));
+        assert!(html.contains("&quot; onload=x &lt;b&gt;&amp;"));
+    }
 }
