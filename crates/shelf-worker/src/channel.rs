@@ -4,9 +4,9 @@
 //! gated — the sync is idempotent).
 
 use crate::db;
+use crate::located::Located;
 use serde::Deserialize;
 use std::collections::HashMap;
-use crate::located::Located;
 use worker::*;
 
 const CHANNEL_BASE: &str = "https://repo.prefix.dev/modular-community";
@@ -48,8 +48,7 @@ fn dedupe_renamed(latest: &mut HashMap<String, String>) {
             None => true,
             Some(other) => {
                 let other_version = &latest[other];
-                newer(version, other_version)
-                    || (version == other_version && name.contains('_'))
+                newer(version, other_version) || (version == other_version && name.contains('_'))
             }
         };
         if wins {
@@ -64,12 +63,19 @@ mod dedupe_tests {
     use super::*;
 
     fn map(entries: &[(&str, &str)]) -> HashMap<String, String> {
-        entries.iter().map(|(n, v)| (n.to_string(), v.to_string())).collect()
+        entries
+            .iter()
+            .map(|(n, v)| (n.to_string(), v.to_string()))
+            .collect()
     }
 
     #[test]
     fn renamed_package_keeps_newer_variant() {
-        let mut latest = map(&[("small-time", "0.0.1"), ("small_time", "26.2.0"), ("other", "1.0.0")]);
+        let mut latest = map(&[
+            ("small-time", "0.0.1"),
+            ("small_time", "26.2.0"),
+            ("other", "1.0.0"),
+        ]);
         dedupe_renamed(&mut latest);
         assert!(latest.contains_key("small_time"));
         assert!(!latest.contains_key("small-time"));
@@ -104,9 +110,13 @@ pub async fn sync(env: &Env) -> Result<String> {
     let mut latest: HashMap<String, String> = HashMap::new();
     for subdir in SUBDIRS {
         let url = format!("{CHANNEL_BASE}/{subdir}/repodata.json");
-        let mut res = Fetch::Url(url.parse().map_err(|_| Error::RustError("bad url".into()))?)
-            .send()
-            .await.at()?;
+        let mut res = Fetch::Url(
+            url.parse()
+                .map_err(|_| Error::RustError("bad url".into()))?,
+        )
+        .send()
+        .await
+        .at()?;
         if res.status_code() != 200 {
             // Missing subdir is fine; anything else we note and continue.
             continue;
@@ -122,7 +132,9 @@ pub async fn sync(env: &Env) -> Result<String> {
         }
     }
     if latest.is_empty() {
-        return Err(Error::RustError("channel repodata yielded no packages".into()));
+        return Err(Error::RustError(
+            "channel repodata yielded no packages".into(),
+        ));
     }
     dedupe_renamed(&mut latest);
 
@@ -134,13 +146,17 @@ pub async fn sync(env: &Env) -> Result<String> {
         if let Some(existing) = db::tin_by_name(&d1, name).await.at()? {
             if existing.kind != "channel" {
                 if existing.channel_version.as_deref() != Some(version.as_str()) {
-                    db::set_source_channel_version(&d1, name, Some(version)).await.at()?;
+                    db::set_source_channel_version(&d1, name, Some(version))
+                        .await
+                        .at()?;
                 }
                 continue;
             }
         }
         let url = format!("https://prefix.dev/channels/modular-community/packages/{name}");
-        db::upsert_channel_tin(&d1, name, &url, version).await.at()?;
+        db::upsert_channel_tin(&d1, name, &url, version)
+            .await
+            .at()?;
         mirrored += 1;
     }
 
@@ -156,7 +172,9 @@ pub async fn sync(env: &Env) -> Result<String> {
     // Graduated tins whose channel package disappeared: clear the marker.
     for name in db::graduated_source_tin_names(&d1).await.at()? {
         if !latest.contains_key(&name) {
-            db::set_source_channel_version(&d1, &name, None).await.at()?;
+            db::set_source_channel_version(&d1, &name, None)
+                .await
+                .at()?;
         }
     }
 
@@ -223,7 +241,9 @@ async fn github_fetch(env: &Env, url: &str, authenticated: bool) -> Result<Respo
     }
     let mut init = RequestInit::new();
     init.with_headers(headers);
-    Fetch::Request(Request::new_with_init(url, &init)?).send().await
+    Fetch::Request(Request::new_with_init(url, &init)?)
+        .send()
+        .await
 }
 
 async fn github_json<T: for<'de> serde::Deserialize<'de>>(
@@ -326,7 +346,8 @@ async fn refresh_liveliness(env: &Env, d1: &worker::D1Database) -> Result<String
             env,
             &format!("https://api.github.com/repos/{or}/stats/participation"),
         )
-        .await.at()?
+        .await
+        .at()?
         {
             Some(p) => {
                 let weeks = &p.all;
@@ -370,7 +391,11 @@ async fn refresh_liveliness(env: &Env, d1: &worker::D1Database) -> Result<String
     Ok(if failures.is_empty() {
         refreshed.to_string()
     } else {
-        format!("{refreshed} ({} failed, first: {})", failures.len(), failures[0])
+        format!(
+            "{refreshed} ({} failed, first: {})",
+            failures.len(),
+            failures[0]
+        )
     })
 }
 
@@ -514,9 +539,13 @@ const RECIPES_REPO: &str = "modular/modular-community";
 const ENRICH_BATCH: usize = 20;
 
 async fn fetch_text(url: &str) -> Result<Option<String>> {
-    let mut res = Fetch::Url(url.parse().map_err(|_| Error::RustError("bad url".into()))?)
-        .send()
-        .await.at()?;
+    let mut res = Fetch::Url(
+        url.parse()
+            .map_err(|_| Error::RustError("bad url".into()))?,
+    )
+    .send()
+    .await
+    .at()?;
     if res.status_code() != 200 {
         return Ok(None);
     }
@@ -578,10 +607,10 @@ async fn enrich(env: &Env, d1: &worker::D1Database) -> Result<usize> {
     struct DirEntry {
         name: String,
     }
-    let listing_url =
-        format!("https://api.github.com/repos/{RECIPES_REPO}/contents/recipes");
+    let listing_url = format!("https://api.github.com/repos/{RECIPES_REPO}/contents/recipes");
     let dirs: Vec<DirEntry> = github_json(env, &listing_url)
-        .await.at()?
+        .await
+        .at()?
         .ok_or_else(|| Error::RustError("recipes listing unavailable".into()))?;
     // Match package name to recipe dir with increasing looseness: exact
     // (case-insensitive), separator-insensitive, then with mojo affixes
@@ -610,14 +639,18 @@ async fn enrich(env: &Env, d1: &worker::D1Database) -> Result<usize> {
     for name in pending {
         let Some(dir) = find_dir(&name) else {
             // No recipe dir matches: mark checked so we don't retry forever.
-            db::enrich_channel_tin(d1, &name, "", None, None).await.at()?;
+            db::enrich_channel_tin(d1, &name, "", None, None)
+                .await
+                .at()?;
             continue;
         };
         let raw_url = format!(
             "https://raw.githubusercontent.com/{RECIPES_REPO}/main/recipes/{dir}/recipe.yaml"
         );
         let Some(recipe) = fetch_text(&raw_url).await.at()? else {
-            db::enrich_channel_tin(d1, &name, "", None, None).await.at()?;
+            db::enrich_channel_tin(d1, &name, "", None, None)
+                .await
+                .at()?;
             continue;
         };
         let repository = yaml_value(&recipe, "repository:")
@@ -634,7 +667,8 @@ async fn enrich(env: &Env, d1: &worker::D1Database) -> Result<usize> {
             summary.as_deref(),
             repository.as_deref(),
         )
-        .await.at()?;
+        .await
+        .at()?;
         enriched += 1;
     }
     Ok(enriched)

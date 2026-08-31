@@ -32,9 +32,7 @@ pub async fn fetch(url: &str, commit_sha: &str) -> Option<String> {
     let (owner, repo) = (parts.next()?, parts.next()?);
     // mojoproject.toml is the same manifest under pixi's Mojo-flavoured name.
     for file in ["pixi.toml", "mojoproject.toml"] {
-        let raw = format!(
-            "https://raw.githubusercontent.com/{owner}/{repo}/{commit_sha}/{file}"
-        );
+        let raw = format!("https://raw.githubusercontent.com/{owner}/{repo}/{commit_sha}/{file}");
         let headers = Headers::new();
         headers.set("User-Agent", "mojoshelf-publish").ok()?;
         let mut init = RequestInit::new();
@@ -72,7 +70,9 @@ pub fn escaping_path_deps(manifest: &str) -> Vec<Escaping> {
 
 fn walk(table: &toml::Table, prefix: &str, found: &mut Vec<Escaping>) {
     for (key, value) in table {
-        let Some(child) = value.as_table() else { continue };
+        let Some(child) = value.as_table() else {
+            continue;
+        };
         let path = if prefix.is_empty() {
             key.clone()
         } else {
@@ -82,7 +82,9 @@ fn walk(table: &toml::Table, prefix: &str, found: &mut Vec<Escaping>) {
         // [dependencies], [package.host-dependencies], [feature.x.dependencies].
         if key.ends_with("dependencies") {
             for (name, spec) in child {
-                let Some(spec) = spec.as_table() else { continue };
+                let Some(spec) = spec.as_table() else {
+                    continue;
+                };
                 let Some(dep_path) = spec.get("path").and_then(|p| p.as_str()) else {
                     continue;
                 };

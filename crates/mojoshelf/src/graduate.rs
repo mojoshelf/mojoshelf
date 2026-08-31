@@ -61,7 +61,10 @@ pub fn run(maintainer: Option<&str>, license: Option<&str>, out: &str) -> Result
              — FFI-heavy tins need a hand-written channel recipe"
         );
     }
-    let pkg_cfg = package.get("build").and_then(|b| b.get("config")).and_then(|c| c.get("pkg"));
+    let pkg_cfg = package
+        .get("build")
+        .and_then(|b| b.get("config"))
+        .and_then(|c| c.get("pkg"));
     let pkg_path = pkg_cfg
         .and_then(|p| p.get("path"))
         .and_then(|p| p.as_str())
@@ -87,7 +90,10 @@ pub fn run(maintainer: Option<&str>, license: Option<&str>, out: &str) -> Result
     let has_shim = package
         .get("run-dependencies")
         .and_then(|d| d.as_table())
-        .map(|t| t.iter().any(|(k, v)| k != "mojo-compiler" && v.get("path").is_some()))
+        .map(|t| {
+            t.iter()
+                .any(|(k, v)| k != "mojo-compiler" && v.get("path").is_some())
+        })
         .unwrap_or(false);
 
     // ── license ────────────────────────────────────────────────────────────
@@ -108,7 +114,9 @@ pub fn run(maintainer: Option<&str>, license: Option<&str>, out: &str) -> Result
         .and_then(|r| r.split('/').next())
         .unwrap_or("")
         .to_string();
-    let maintainer = maintainer.map(str::to_string).unwrap_or_else(|| owner.clone());
+    let maintainer = maintainer
+        .map(str::to_string)
+        .unwrap_or_else(|| owner.clone());
 
     // ── dependencies on other tins ─────────────────────────────────────────
     let mut dep_lines = String::new();
@@ -198,12 +206,18 @@ extra:
     println!();
     println!("Submit it to the modular-community channel:");
     println!("  1. Fork https://github.com/modular/modular-community");
-    println!("  2. Copy {} to recipes/{name}/ in the fork", out_dir.display());
+    println!(
+        "  2. Copy {} to recipes/{name}/ in the fork",
+        out_dir.display()
+    );
     println!("  3. Open a PR — their CI builds the recipe on every platform");
     println!();
     println!("With the gh CLI, roughly:");
     println!("  gh repo fork modular/modular-community --clone");
-    println!("  cp -R {} modular-community/recipes/{name}", out_dir.display());
+    println!(
+        "  cp -R {} modular-community/recipes/{name}",
+        out_dir.display()
+    );
     println!("  cd modular-community && git checkout -b add-{name} && git add recipes/{name}");
     println!("  git commit -m 'Add {name} {version}' && git push -u origin add-{name}");
     println!("  gh pr create --title 'Add {name} {version}'");

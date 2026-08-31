@@ -5,9 +5,9 @@
 //! API serves.
 
 use crate::db;
+use crate::located::Located;
 use serde_json::{json, Value};
 use shelf_core::TinSummary;
-use crate::located::Located;
 use worker::*;
 
 const LATEST_PROTOCOL: &str = "2025-06-18";
@@ -66,7 +66,11 @@ pub async fn post(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
             "parse error: expected one JSON-RPC 2.0 request object",
         );
     };
-    let method = body.get("method").and_then(Value::as_str).unwrap_or("").to_string();
+    let method = body
+        .get("method")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
     let Some(id) = body.get("id").cloned() else {
         // A notification (notifications/initialized, …) expects no reply.
         return with_cors(Response::empty()?.with_status(202));
@@ -165,10 +169,16 @@ async fn call_tool(
     params: Option<&Value>,
 ) -> Result<std::result::Result<Value, (i64, String)>> {
     let Some(params) = params else {
-        return Ok(Err((-32602, "tools/call needs params {name, arguments}".into())));
+        return Ok(Err((
+            -32602,
+            "tools/call needs params {name, arguments}".into(),
+        )));
     };
     let tool = params.get("name").and_then(Value::as_str).unwrap_or("");
-    let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+    let args = params
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
     let str_arg = |key: &str| args.get(key).and_then(Value::as_str).map(str::to_string);
     let d1 = ctx.env.d1("DB")?;
     let result = match tool {
@@ -179,7 +189,10 @@ async fn call_tool(
         }
         "tin_info" => {
             let Some(name) = str_arg("name") else {
-                return Ok(Err((-32602, "tin_info needs arguments: {\"name\": …}".into())));
+                return Ok(Err((
+                    -32602,
+                    "tin_info needs arguments: {\"name\": …}".into(),
+                )));
             };
             match crate::card_markdown(&d1, &name).await.at()? {
                 Some(card) => tool_text(card, false),
@@ -188,7 +201,10 @@ async fn call_tool(
         }
         "usage_example" => {
             let Some(name) = str_arg("name") else {
-                return Ok(Err((-32602, "usage_example needs arguments: {\"name\": …}".into())));
+                return Ok(Err((
+                    -32602,
+                    "usage_example needs arguments: {\"name\": …}".into(),
+                )));
             };
             match crate::card_markdown(&d1, &name).await.at()? {
                 Some(card) => tool_text(usage_sections(&card), false),
@@ -226,7 +242,11 @@ fn render_search(tins: &[TinSummary], query: &str) -> String {
         format!("{} tin(s) matching \"{query}\":\n\n", tins.len())
     };
     for t in tins {
-        let kind = if t.kind == "channel" { "channel binary" } else { "source tin" };
+        let kind = if t.kind == "channel" {
+            "channel binary"
+        } else {
+            "source tin"
+        };
         let latest = t.latest_version.as_deref().unwrap_or("unpublished");
         out.push_str(&format!("- {} ({kind}, latest {latest})", t.name));
         if let Some(desc) = t.description.as_deref().filter(|s| !s.is_empty()) {
@@ -308,10 +328,15 @@ mod tests {
 
     #[test]
     fn search_rendering_covers_kinds_and_emptiness() {
-        let tins = vec![summary("csv", "source", Some(true)), summary("emberjson", "channel", None)];
+        let tins = vec![
+            summary("csv", "source", Some(true)),
+            summary("emberjson", "channel", None),
+        ];
         let out = render_search(&tins, "parsing");
         assert!(out.contains("2 tin(s) matching \"parsing\""));
-        assert!(out.contains("- csv (source tin, latest 0.1.0) — csv library [parsing] (smoke build passing)"));
+        assert!(out.contains(
+            "- csv (source tin, latest 0.1.0) — csv library [parsing] (smoke build passing)"
+        ));
         assert!(out.contains("- emberjson (channel binary, latest 0.1.0)"));
         assert!(out.contains("tin_info"));
 
@@ -355,7 +380,10 @@ mod tests {
         let req = serde_json::json!({ "params": { "protocolVersion": "2025-03-26" } });
         assert_eq!(initialize_result(&req)["protocolVersion"], "2025-03-26");
         let unknown = serde_json::json!({ "params": { "protocolVersion": "1999-01-01" } });
-        assert_eq!(initialize_result(&unknown)["protocolVersion"], LATEST_PROTOCOL);
+        assert_eq!(
+            initialize_result(&unknown)["protocolVersion"],
+            LATEST_PROTOCOL
+        );
         let tools = tool_definitions();
         let names: Vec<&str> = tools
             .as_array()

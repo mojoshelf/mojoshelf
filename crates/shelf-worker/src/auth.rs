@@ -63,7 +63,5 @@ pub fn clear_cookie(name: &str) -> String {
 
 pub fn bearer_token(req: &Request) -> Option<String> {
     let header = req.headers().get("authorization").ok().flatten()?;
-    header
-        .strip_prefix("Bearer ")
-        .map(|t| t.trim().to_string())
+    header.strip_prefix("Bearer ").map(|t| t.trim().to_string())
 }

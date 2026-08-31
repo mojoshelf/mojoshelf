@@ -63,7 +63,10 @@ fn add_inner(reg: &Registry, specs: &[String], dry_run: bool, force: bool) -> Re
             if b.kind == "channel" {
                 println!("  pixi add {}  # modular-community channel", b.name);
             } else {
-                println!("  pixi add --git {} --rev {} {}", b.url, b.commit_sha, b.name);
+                println!(
+                    "  pixi add --git {} --rev {} {}",
+                    b.url, b.commit_sha, b.name
+                );
             }
         }
         return Ok(());

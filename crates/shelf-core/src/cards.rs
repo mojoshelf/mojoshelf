@@ -235,7 +235,9 @@ pub fn assemble_card(d: &TinDetail, extras: &CardExtras) -> String {
 
     if let Some(snippet) = extras.snippet.as_deref() {
         if out.len() + snippet.len() + 64 < CARD_MAX_BYTES {
-            out.push_str(&format!("\n## Usage (from the README)\n\n```mojo\n{snippet}\n```\n"));
+            out.push_str(&format!(
+                "\n## Usage (from the README)\n\n```mojo\n{snippet}\n```\n"
+            ));
         }
     }
 
@@ -297,7 +299,10 @@ mod tests {
     #[test]
     fn snippet_prefers_mojo_block() {
         let readme = "Intro\n```sh\npixi add x\n```\n```mojo\nfrom zlib import inflate\n```\n";
-        assert_eq!(extract_snippet(readme).as_deref(), Some("from zlib import inflate"));
+        assert_eq!(
+            extract_snippet(readme).as_deref(),
+            Some("from zlib import inflate")
+        );
         let plain = "```\ngeneric block\n```\n```python\nnope\n```";
         assert_eq!(extract_snippet(plain).as_deref(), Some("generic block"));
         assert_eq!(extract_snippet("no code here"), None);
@@ -317,7 +322,10 @@ mod tests {
     fn card_has_the_load_bearing_facts() {
         let extras = CardExtras {
             import_name: Some("zlib".into()),
-            api: vec![("src/zlib/inflate.mojo".into(), vec!["fn inflate(data: List[UInt8]) raises -> List[UInt8]".into()])],
+            api: vec![(
+                "src/zlib/inflate.mojo".into(),
+                vec!["fn inflate(data: List[UInt8]) raises -> List[UInt8]".into()],
+            )],
             snippet: Some("from zlib import inflate".into()),
         };
         let card = assemble_card(&detail(), &extras);
@@ -341,10 +349,14 @@ mod tests {
 
     #[test]
     fn card_guesses_import_and_caps_size() {
-        let sigs: Vec<String> = (0..200).map(|i| format!("fn f{i}(x: Int) -> Int")).collect();
+        let sigs: Vec<String> = (0..200)
+            .map(|i| format!("fn f{i}(x: Int) -> Int"))
+            .collect();
         let extras = CardExtras {
             import_name: None,
-            api: (0..40).map(|i| (format!("src/m/f{i}.mojo"), sigs.clone())).collect(),
+            api: (0..40)
+                .map(|i| (format!("src/m/f{i}.mojo"), sigs.clone()))
+                .collect(),
             snippet: None,
         };
         let card = assemble_card(&detail(), &extras);

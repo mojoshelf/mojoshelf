@@ -116,12 +116,25 @@ async fn server_event(req: &Request) -> Option<(&'static str, String, serde_json
             },
         };
         let tin = (!tin.is_empty()).then(|| tin.to_string());
-        ("api_tins_request", json!({ "endpoint": endpoint, "tin": tin }))
+        (
+            "api_tins_request",
+            json!({ "endpoint": endpoint, "tin": tin }),
+        )
     } else {
         return None;
     };
-    let ip = req.headers().get("cf-connecting-ip").ok().flatten().unwrap_or_default();
-    let ua = req.headers().get("user-agent").ok().flatten().unwrap_or_default();
+    let ip = req
+        .headers()
+        .get("cf-connecting-ip")
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    let ua = req
+        .headers()
+        .get("user-agent")
+        .ok()
+        .flatten()
+        .unwrap_or_default();
     props["path"] = json!(path);
     props["user_agent"] = json!(ua);
     props["$process_person_profile"] = json!(false);
@@ -195,7 +208,10 @@ pub(crate) async fn posthog_exception(
         props.extend(extra);
     }
     // Personless, so the id only has to be unique per report.
-    let distinct_id = format!("worker-{}", auth::sha256_hex(&Date::now().as_millis().to_string()));
+    let distinct_id = format!(
+        "worker-{}",
+        auth::sha256_hex(&Date::now().as_millis().to_string())
+    );
     posthog_capture("$exception", distinct_id, props).await;
 }
 
@@ -243,12 +259,18 @@ async fn serve_badge(ctx: &RouteContext<()>, name: &str, nightly: bool) -> Resul
     let (label, (message, color)) = if nightly {
         (
             "mojo nightly",
-            badge::nightly_state(tin.nightly_ok.map(|v| v != 0), tin.nightly_compiler.as_deref()),
+            badge::nightly_state(
+                tin.nightly_ok.map(|v| v != 0),
+                tin.nightly_compiler.as_deref(),
+            ),
         )
     } else {
         (
             "mojoshelf",
-            badge::stable_state(tin.verified_ok.map(|v| v != 0), tin.verified_compiler.as_deref()),
+            badge::stable_state(
+                tin.verified_ok.map(|v| v != 0),
+                tin.verified_compiler.as_deref(),
+            ),
         )
     };
     let headers = Headers::new();
@@ -272,12 +294,18 @@ async fn api_tin_badge(req: Request, ctx: RouteContext<()>) -> Result<Response> 
     let (label, (message, color)) = if nightly {
         (
             "mojo nightly",
-            badge::nightly_state(tin.nightly_ok.map(|v| v != 0), tin.nightly_compiler.as_deref()),
+            badge::nightly_state(
+                tin.nightly_ok.map(|v| v != 0),
+                tin.nightly_compiler.as_deref(),
+            ),
         )
     } else {
         (
             "mojoshelf",
-            badge::stable_state(tin.verified_ok.map(|v| v != 0), tin.verified_compiler.as_deref()),
+            badge::stable_state(
+                tin.verified_ok.map(|v| v != 0),
+                tin.verified_compiler.as_deref(),
+            ),
         )
     };
     Response::from_json(&json!({
@@ -526,12 +554,18 @@ async fn api_publish(mut req: Request, ctx: RouteContext<()>) -> Result<Response
         return error_json("invalid JSON body", 400);
     };
     if body.name.is_empty()
-        || !body.name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+        || !body
+            .name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
     {
         return error_json("name must be non-empty [a-z0-9_-]", 400);
     }
     if semver::Version::parse(&body.version).is_err() {
-        return error_json(&format!("'{}' is not a valid semver version", body.version), 400);
+        return error_json(
+            &format!("'{}' is not a valid semver version", body.version),
+            400,
+        );
     }
     if !is_full_sha(&body.commit_sha) {
         return error_json("commit_sha must be a full 40-character sha", 400);
@@ -565,7 +599,11 @@ async fn api_publish(mut req: Request, ctx: RouteContext<()>) -> Result<Response
         }
     }
 
-    let description = body.description.as_deref().map(str::trim).filter(|d| !d.is_empty());
+    let description = body
+        .description
+        .as_deref()
+        .map(str::trim)
+        .filter(|d| !d.is_empty());
     let tags = shelf_core::split_tags(&body.tags.join(",")).join(",");
     let tin = match db::tin_by_name(&d1, &body.name).await.at()? {
         Some(existing) => {
@@ -585,20 +623,28 @@ async fn api_publish(mut req: Request, ctx: RouteContext<()>) -> Result<Response
                     403,
                 );
             }
-            db::claim_tin(&d1, existing.id, &body.url, author.id, description, &tags).await.at()?;
+            db::claim_tin(&d1, existing.id, &body.url, author.id, description, &tags)
+                .await
+                .at()?;
             existing
         }
         None => {
-            db::create_tin(&d1, &body.name, &body.url, author.id, description, &tags).await.at()?;
+            db::create_tin(&d1, &body.name, &body.url, author.id, description, &tags)
+                .await
+                .at()?;
             db::tin_by_name(&d1, &body.name)
-                .await.at()?
+                .await
+                .at()?
                 .ok_or_else(|| worker::Error::RustError("tin vanished after insert".into()))?
         }
     };
     let versions = db::versions_of(&d1, tin.id).await.at()?;
     if versions.iter().any(|v| v.version == body.version) {
         return error_json(
-            &format!("version {} of '{}' is already published", body.version, body.name),
+            &format!(
+                "version {} of '{}' is already published",
+                body.version, body.name
+            ),
             409,
         );
     }
@@ -606,12 +652,12 @@ async fn api_publish(mut req: Request, ctx: RouteContext<()>) -> Result<Response
     for dep in &body.dependencies {
         match db::tin_by_name(&d1, dep).await.at()? {
             Some(b) => dep_ids.push(b.id),
-            None => {
-                return error_json(&format!("dependency '{dep}' is not a registered tin"), 400)
-            }
+            None => return error_json(&format!("dependency '{dep}' is not a registered tin"), 400),
         }
     }
-    db::insert_version(&d1, tin.id, &body.version, &body.commit_sha, &dep_ids).await.at()?;
+    db::insert_version(&d1, tin.id, &body.version, &body.commit_sha, &dep_ids)
+        .await
+        .at()?;
     // Verification badges come from the weekly tin-smoke sweep, so without
     // this a tin published just after a sweep looks unverified for a week.
     // Best effort: the publish has already succeeded either way.
@@ -648,7 +694,11 @@ async fn llms_txt(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
             "- [{name}](https://mojoshelf.org/tins/{name}): {desc}{badge}\n",
             name = t.name,
             desc = t.description.as_deref().unwrap_or("(no description yet)"),
-            badge = if t.kind == "channel" { " (channel binary)" } else { "" },
+            badge = if t.kind == "channel" {
+                " (channel binary)"
+            } else {
+                ""
+            },
         ));
     }
     text_response(out, "text/plain; charset=utf-8")
@@ -685,7 +735,8 @@ pub(crate) async fn card_markdown(d1: &D1Database, name: &str) -> Result<Option<
         None => Ok(None),
         Some(Some(card)) => Ok(Some(card)),
         Some(None) => Ok(db::tin_detail(d1, name)
-            .await.at()?
+            .await
+            .at()?
             .map(|detail| shelf_core::cards::assemble_card(&detail, &Default::default()))),
     }
 }
@@ -724,7 +775,10 @@ async fn api_verify(mut req: Request, ctx: RouteContext<()>) -> Result<Response>
         return error_json("publish token required", 401);
     }
     let Ok(body) = req.json::<VerifyBody>().await else {
-        return error_json("invalid JSON body; expected {\"results\": [{\"name\", \"ok\", \"compiler\"?}]}", 400);
+        return error_json(
+            "invalid JSON body; expected {\"results\": [{\"name\", \"ok\", \"compiler\"?}]}",
+            400,
+        );
     };
     let (mut updated, mut unknown) = (0usize, 0usize);
     for r in &body.results {
@@ -776,7 +830,9 @@ async fn admin_upsert(mut req: Request, ctx: RouteContext<()>) -> Result<Respons
     if name.is_empty() || url.is_empty() {
         return error_json("name and url are required", 400);
     }
-    db::upsert_tin(&ctx.env.d1("DB")?, &name, &url, &description).await.at()?;
+    db::upsert_tin(&ctx.env.d1("DB")?, &name, &url, &description)
+        .await
+        .at()?;
     let mut back = req.url()?;
     back.set_path("/admin");
     back.set_query(None);

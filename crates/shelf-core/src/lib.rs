@@ -261,7 +261,10 @@ mod tests {
     fn iso_parse_known_values() {
         assert_eq!(iso_to_unix_secs("1970-01-01T00:00:00Z"), Some(0));
         assert_eq!(iso_to_unix_secs("2000-03-01T00:00:00Z"), Some(951_868_800));
-        assert_eq!(iso_to_unix_secs("2026-08-26T12:30:05Z"), Some(1_787_747_405));
+        assert_eq!(
+            iso_to_unix_secs("2026-08-26T12:30:05Z"),
+            Some(1_787_747_405)
+        );
         assert_eq!(iso_to_unix_secs("garbage"), None);
         assert_eq!(iso_to_unix_secs(""), None);
     }

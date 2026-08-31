@@ -56,7 +56,11 @@ window.addEventListener('DOMContentLoaded', function () {{
 
 fn page(title: &str, active: &str, body: &str) -> String {
     let item = |href: &str, label: &str| {
-        let class = if label == active { " class=\"active\"" } else { "" };
+        let class = if label == active {
+            " class=\"active\""
+        } else {
+            ""
+        };
         format!("<a href=\"{href}\"{class}>{label}</a>")
     };
     let nav = format!(
@@ -269,7 +273,13 @@ fn url_change_warning(url: &str, prev_url: Option<&str>, changed_at: Option<&str
     }
     let changed = changed_at.unwrap_or_default();
     let from = prev_url
-        .map(|p| format!(" (previously <a href=\"{}\">{}</a>)", esc(p), esc(&short_repo(p))))
+        .map(|p| {
+            format!(
+                " (previously <a href=\"{}\">{}</a>)",
+                esc(p),
+                esc(&short_repo(p))
+            )
+        })
         .unwrap_or_default();
     format!(
         "<p class=\"warn\">⚠️ The git repository behind this tin changed on {} to \
@@ -295,7 +305,12 @@ fn tin_link_list(names: &[String]) -> String {
     }
     let items: String = names
         .iter()
-        .map(|n| format!("<li><a href=\"/tins/{n}\"><code>{n}</code></a></li>", n = esc(n)))
+        .map(|n| {
+            format!(
+                "<li><a href=\"/tins/{n}\"><code>{n}</code></a></li>",
+                n = esc(n)
+            )
+        })
         .collect();
     format!("<ul>{items}</ul>")
 }
@@ -325,11 +340,7 @@ fn tin_table(tins: &[TinSummary]) -> String {
             };
             let author = if b.kind == "channel" {
                 match b.author.as_deref() {
-                    Some(a) => format!(
-                        "<a href=\"https://github.com/{}\">{}</a>",
-                        esc(a),
-                        esc(a)
-                    ),
+                    Some(a) => format!("<a href=\"https://github.com/{}\">{}</a>", esc(a), esc(a)),
                     None => "modular-community".to_string(),
                 }
             } else {
@@ -340,11 +351,18 @@ fn tin_table(tins: &[TinSummary]) -> String {
                  <td>{}</td>\
                  <td><a href=\"{}\">{}</a>{repo_flag}<span class=\"sub\">{author}</span></td>\
                  <td>{activity}</td><td>{}{}</td></tr>",
-                b.latest_version.as_deref().map(esc).unwrap_or_else(|| "—".into()),
+                b.latest_version
+                    .as_deref()
+                    .map(esc)
+                    .unwrap_or_else(|| "—".into()),
                 esc(&b.url),
                 esc(&short_repo(&b.url)),
                 esc(b.description.as_deref().unwrap_or("")),
-                if tags.is_empty() { String::new() } else { format!("<br>{tags}") },
+                if tags.is_empty() {
+                    String::new()
+                } else {
+                    format!("<br>{tags}")
+                },
                 name = esc(&b.name),
                 badge = badge,
                 activity = activity_cell(b.stars, b.last_push.as_deref()),
@@ -414,7 +432,9 @@ its packages are badged <span class="tag">channel</span>.</p>
         q = esc(q),
         // Scores arrive in cron batches, so until the first refresh lands the
         // list is still alphabetical — don't claim a ranking it doesn't have.
-        heading = if q.is_empty() && page_no == 1 && last > 1
+        heading = if q.is_empty()
+            && page_no == 1
+            && last > 1
             && tins.first().is_some_and(|t| t.score.is_some())
         {
             format!("Most interesting tins <span class=\"pick-one\">of {total}</span>")
@@ -436,17 +456,20 @@ fn liveliness_line(d: &shelf_core::TinDetail) -> String {
     let (Some(stars), Some(push)) = (d.stars, d.last_push.as_deref()) else {
         return String::new();
     };
-    let mut parts = vec![format!("⭐ {stars}"), format!("last commit {} ago", age(push))];
+    let mut parts = vec![
+        format!("⭐ {stars}"),
+        format!("last commit {} ago", age(push)),
+    ];
     if let Some(m) = d.commits_month {
-        parts.push(format!("{m} commit{} last month", if m == 1 { "" } else { "s" }));
+        parts.push(format!(
+            "{m} commit{} last month",
+            if m == 1 { "" } else { "s" }
+        ));
     }
     if let Some(y) = d.commits_year {
         parts.push(format!("{y} last year"));
     }
-    format!(
-        "<p class=\"install-label\">{}</p>",
-        parts.join(" · ")
-    )
+    format!("<p class=\"install-label\">{}</p>", parts.join(" · "))
 }
 
 /// Every tin-smoke run. The workflow cannot be filtered per tin from a URL, so
@@ -584,7 +607,8 @@ so.</p>"#,
             desc = desc,
             maintainer = maintainer,
             liveliness = liveliness_line(d),
-            warning = url_change_warning(&d.url, d.prev_url.as_deref(), d.url_changed_at.as_deref()),
+            warning =
+                url_change_warning(&d.url, d.prev_url.as_deref(), d.url_changed_at.as_deref()),
         );
         return page(&format!("Mojo Shelf — {}", d.name), "Tins", &body);
     }
@@ -622,8 +646,15 @@ so.</p>"#,
     let liveliness = liveliness_line(d);
     let graduated = match &d.channel_version {
         Some(cv) if d.kind == "source" => {
-            let latest_src = d.versions.first().map(|v| v.version.as_str()).unwrap_or("0.0.0");
-            let drift = match (semver::Version::parse(cv), semver::Version::parse(latest_src)) {
+            let latest_src = d
+                .versions
+                .first()
+                .map(|v| v.version.as_str())
+                .unwrap_or("0.0.0");
+            let drift = match (
+                semver::Version::parse(cv),
+                semver::Version::parse(latest_src),
+            ) {
                 (Ok(c), Ok(s)) if c > s => format!(
                     " — <strong>newer than the shelf's {}</strong>",
                     esc(latest_src)
@@ -1008,8 +1039,7 @@ it is shown only once:</p><p><code>{}</code></p>
          from your tin's repo root.</p>"
             .to_string()
     } else {
-        tins
-            .iter()
+        tins.iter()
             .map(|(tin, versions)| {
                 let vrows: String = versions
                     .iter()

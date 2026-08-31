@@ -46,7 +46,9 @@ pub fn shields_color(hex: &str) -> &'static str {
 }
 
 fn xml_escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 /// Verdana 11px averages ~6.6px per char; textLength below makes the exact
@@ -78,7 +80,10 @@ mod tests {
             ("verified · mojo 1.0.0".into(), GREEN)
         );
         assert_eq!(stable_state(Some(false), None), ("failing".into(), RED));
-        assert_eq!(stable_state(None, Some("1.0.0")), ("not verified".into(), GREY));
+        assert_eq!(
+            stable_state(None, Some("1.0.0")),
+            ("not verified".into(), GREY)
+        );
         assert_eq!(nightly_state(Some(true), None), ("passing".into(), GREEN));
         assert_eq!(nightly_state(None, None), ("not checked".into(), GREY));
     }

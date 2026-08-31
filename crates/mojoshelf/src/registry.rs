@@ -2,7 +2,7 @@
 
 use anyhow::{anyhow, bail, Result};
 use serde::de::DeserializeOwned;
-use shelf_core::{ApiError, TinDetail, TinSummary, PublishRequest, ResolvedTin};
+use shelf_core::{ApiError, PublishRequest, ResolvedTin, TinDetail, TinSummary};
 
 pub struct Registry {
     base: String,
@@ -71,7 +71,10 @@ impl Registry {
 
     pub fn publish(&self, req: &PublishRequest) -> Result<()> {
         let token = std::env::var("SHELF_TOKEN").map_err(|_| {
-            anyhow!("SHELF_TOKEN is not set; sign in at {}/authors to get one", self.base)
+            anyhow!(
+                "SHELF_TOKEN is not set; sign in at {}/authors to get one",
+                self.base
+            )
         })?;
         let url = format!("{}/api/publish", self.base);
         let res = self

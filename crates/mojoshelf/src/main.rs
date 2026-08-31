@@ -22,7 +22,12 @@ use std::path::Path;
 )]
 struct Cli {
     /// Registry base URL.
-    #[arg(long, global = true, env = "SHELF_REGISTRY", default_value = "https://mojoshelf.org")]
+    #[arg(
+        long,
+        global = true,
+        env = "SHELF_REGISTRY",
+        default_value = "https://mojoshelf.org"
+    )]
     registry: String,
     /// Install via pixi git source dependencies instead of git submodules
     /// (the default when invoked as `pixi shelf`).
@@ -100,9 +105,11 @@ fn main() {
         Cmd::Search { term } => search(&reg, term.as_deref().unwrap_or("")),
         Cmd::Info { name } => info(&reg, &name),
         Cmd::Publish => publish(&reg),
-        Cmd::Graduate { maintainer, license, out } => {
-            graduate::run(maintainer.as_deref(), license.as_deref(), &out)
-        }
+        Cmd::Graduate {
+            maintainer,
+            license,
+            out,
+        } => graduate::run(maintainer.as_deref(), license.as_deref(), &out),
     };
     if let Err(e) = result {
         eprintln!("error: {e:#}");
@@ -170,7 +177,10 @@ mod tests {
 /// Converts an ssh-style remote (git@host:owner/repo) to https so that
 /// consumers without ssh access can clone the submodule.
 pub(crate) fn https_url(origin: &str) -> String {
-    match origin.strip_prefix("git@").and_then(|rest| rest.split_once(':')) {
+    match origin
+        .strip_prefix("git@")
+        .and_then(|rest| rest.split_once(':'))
+    {
         Some((host, path)) => format!("https://{host}/{path}"),
         None => origin.to_string(),
     }
@@ -270,7 +280,12 @@ fn install(root: &Path, tin: &ResolvedTin) -> Result<()> {
     let path = format!("shelf/{}", tin.name);
     git::add_submodule(root, &tin.url, &path)?;
     git::pin_submodule(root, &path, &tin.commit_sha)?;
-    println!("added {} {} ({})", tin.name, tin.version, &tin.commit_sha[..12]);
+    println!(
+        "added {} {} ({})",
+        tin.name,
+        tin.version,
+        &tin.commit_sha[..12]
+    );
     Ok(())
 }
 
@@ -416,7 +431,12 @@ fn info(reg: &Registry, name: &str) -> Result<()> {
     let d = reg.info(name)?;
     println!("{}", d.name);
     println!("  url: {}", d.url);
-    warn_recent_url_change(&d.name, &d.url, d.prev_url.as_deref(), d.url_changed_at.as_deref());
+    warn_recent_url_change(
+        &d.name,
+        &d.url,
+        d.prev_url.as_deref(),
+        d.url_changed_at.as_deref(),
+    );
     if let Some(author) = &d.author {
         println!("  author: {author}");
     }

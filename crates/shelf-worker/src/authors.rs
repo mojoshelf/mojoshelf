@@ -1,10 +1,10 @@
 //! GitHub sign-in and the author dashboard (publish tokens, deleting
 //! versions/tins).
 
+use crate::located::Located;
 use crate::{auth, db, error_json, html};
 use serde::Deserialize;
 use serde_json::json;
-use crate::located::Located;
 use worker::wasm_bindgen::JsValue;
 use worker::*;
 
@@ -25,7 +25,10 @@ fn session_secret(env: &Env) -> Option<String> {
     env.secret("SESSION_SECRET").ok().map(|s| s.to_string())
 }
 
-pub async fn current_author(req: &Request, ctx: &RouteContext<()>) -> Result<Option<db::AuthorRow>> {
+pub async fn current_author(
+    req: &Request,
+    ctx: &RouteContext<()>,
+) -> Result<Option<db::AuthorRow>> {
     let Some(secret) = session_secret(&ctx.env) else {
         return Ok(None);
     };
@@ -97,7 +100,9 @@ async fn github_user(env: &Env, code: &str) -> Result<Option<GhUser>> {
     let mut init = RequestInit::new();
     init.with_method(Method::Get).with_headers(headers);
     let req = Request::new_with_init("https://api.github.com/user", &init)?;
-    Ok(Some(Fetch::Request(req).send().await.at()?.json().await.at()?))
+    Ok(Some(
+        Fetch::Request(req).send().await.at()?.json().await.at()?,
+    ))
 }
 
 pub async fn callback(req: Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -116,7 +121,9 @@ pub async fn callback(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let Some(user) = github_user(&ctx.env, &code).await.at()? else {
         return error_json("GitHub did not accept the sign-in; try again", 400);
     };
-    let author = db::upsert_author(&ctx.env.d1("DB")?, user.id, &user.login).await.at()?;
+    let author = db::upsert_author(&ctx.env.d1("DB")?, user.id, &user.login)
+        .await
+        .at()?;
     let Some(secret) = session_secret(&ctx.env) else {
         return error_json("session secret is not configured", 503);
     };
@@ -171,7 +178,9 @@ pub async fn generate_token(req: Request, ctx: RouteContext<()>) -> Result<Respo
     };
     let d1 = ctx.env.d1("DB")?;
     let token = format!("shelf_{}", auth::random_hex(24)?);
-    db::set_token_hash(&d1, author.id, &auth::sha256_hex(&token)).await.at()?;
+    db::set_token_hash(&d1, author.id, &auth::sha256_hex(&token))
+        .await
+        .at()?;
     let tins = author_tins_with_versions(&d1, author.id).await.at()?;
     Response::from_html(html::authors_dashboard(
         &author.github_login,
@@ -206,7 +215,8 @@ pub async fn author_page(_req: Request, ctx: RouteContext<()>) -> Result<Respons
         return Response::error("author not found", 404);
     }
     let tins: Vec<_> = db::list_tins(&d1, "", -1, 0)
-        .await.at()?
+        .await
+        .at()?
         .into_iter()
         .filter(|b| b.author.as_deref() == Some(login.as_str()))
         .collect();
