@@ -295,6 +295,8 @@ mod tests {
             latest_version: Some("0.1.0".into()),
             kind: kind.into(),
             stars: None,
+            forks: None,
+            score: None,
             last_push: None,
             prev_url: None,
             url_changed_at: None,

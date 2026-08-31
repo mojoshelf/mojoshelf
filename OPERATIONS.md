@@ -153,6 +153,22 @@ straight to it. Verifications made before that was recorded link to the
 workflow history instead, since a workflow cannot be filtered per tin from a
 URL.
 
+## Publish-time manifest check
+
+`/api/publish` fetches the tin's `pixi.toml` (or `mojoproject.toml`) at the
+commit being published and rejects it with 400 if any dependency is declared
+by a path leaving the repository — `{ path = "../sibling" }`. Such a tin
+resolves in its author's checkout and nowhere else, and pixi offers no
+equivalent of Cargo's `{ path = "..", version = ".." }` fallback: an entry is
+exactly one of path, git, url or version, and "every source dependency of a
+published package has to opt in as well". Declare siblings as git
+dependencies pinned to a commit instead.
+
+Paths *inside* the repo are fine and stay accepted — a tin's own FFI shim at
+`{ path = "shim" }` is the normal case. If the manifest cannot be fetched or
+parsed the publish proceeds: the check refuses a tin on evidence, never on the
+absence of it.
+
 ## When scores or activity stop updating
 
 The tin list ranks by a cached `score`, computed from stars, forks and commit

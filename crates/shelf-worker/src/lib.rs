@@ -9,6 +9,7 @@ mod channel;
 mod db;
 mod html;
 mod located;
+mod manifest;
 mod mcp;
 mod smoke;
 
@@ -537,6 +538,31 @@ async fn api_publish(mut req: Request, ctx: RouteContext<()>) -> Result<Response
     }
     if body.url.is_empty() {
         return error_json("url is required", 400);
+    }
+
+    // A tin whose manifest points at sibling checkouts builds for its author
+    // and nobody else. Catch it here, where the fix is one edit away, rather
+    // than days later through a red verification badge.
+    if let Some(text) = manifest::fetch(&body.url, &body.commit_sha).await {
+        let escaping = manifest::escaping_path_deps(&text);
+        if !escaping.is_empty() {
+            let detail = escaping
+                .iter()
+                .map(|e| format!("{} = {{ path = \"{}\" }} in [{}]", e.name, e.path, e.table))
+                .collect::<Vec<_>>()
+                .join("; ");
+            return error_json(
+                &format!(
+                    "this version declares dependencies by a path outside the \
+                     repository, which only resolves in your own checkout, so \
+                     nobody can install it: {detail}. Declare them as git \
+                     dependencies pinned to a commit — pixi has no equivalent \
+                     of Cargo's path-plus-version fallback, so a published \
+                     package has to be self-contained."
+                ),
+                400,
+            );
+        }
     }
 
     let description = body.description.as_deref().map(str::trim).filter(|d| !d.is_empty());
