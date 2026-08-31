@@ -116,6 +116,13 @@ pub struct TinDetail {
     /// Whether the last nightly check passed on every platform.
     #[serde(default)]
     pub nightly_ok: Option<bool>,
+    /// The tin-smoke run behind the stable verification, so a failure can be
+    /// read rather than merely reported.
+    #[serde(default)]
+    pub verified_run_url: Option<String>,
+    /// The tin-smoke run behind the nightly check.
+    #[serde(default)]
+    pub nightly_run_url: Option<String>,
     /// mojo-compiler version of the last nightly check (best effort).
     #[serde(default)]
     pub nightly_compiler: Option<String>,

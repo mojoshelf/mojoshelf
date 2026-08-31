@@ -35,6 +35,8 @@ pub struct TinRow {
     pub nightly_at: Option<String>,
     pub nightly_ok: Option<i64>,
     pub nightly_compiler: Option<String>,
+    pub verified_run_url: Option<String>,
+    pub nightly_run_url: Option<String>,
 }
 
 impl TinRow {
@@ -58,6 +60,7 @@ const TIN_SELECT: &str = "SELECT b.id, b.name, b.url, b.description, b.author_id
     b.prev_url, b.url_changed_at, \
     b.verified_at, b.verified_ok, b.verified_compiler, \
     b.nightly_at, b.nightly_ok, b.nightly_compiler, \
+    b.verified_run_url, b.nightly_run_url, \
     a.github_login AS author FROM tins b LEFT JOIN authors a ON a.id = b.author_id";
 
 /// Search predicate, shared by the list and its count so the pager can never
@@ -240,6 +243,8 @@ pub async fn tin_detail(d1: &D1Database, name: &str) -> Result<Option<TinDetail>
         commits_year: tin.commits_year,
         prev_url: tin.prev_url,
         url_changed_at: tin.url_changed_at,
+        verified_run_url: tin.verified_run_url,
+        nightly_run_url: tin.nightly_run_url,
         verified_at: tin.verified_at,
         verified_ok: tin.verified_ok.map(|v| v != 0),
         verified_compiler: tin.verified_compiler,
@@ -767,12 +772,15 @@ pub async fn set_verified(
     ok: bool,
     compiler: Option<&str>,
     nightly: bool,
+    run_url: Option<&str>,
 ) -> Result<()> {
+    // Recorded for passing runs as well as failing ones: "verified" is worth
+    // as much as "failing" only if you can see what was actually run.
     let sql = if nightly {
-        "UPDATE tins SET nightly_ok = ?2, nightly_compiler = ?3, \
+        "UPDATE tins SET nightly_ok = ?2, nightly_compiler = ?3, nightly_run_url = ?4, \
          nightly_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE name = ?1"
     } else {
-        "UPDATE tins SET verified_ok = ?2, verified_compiler = ?3, \
+        "UPDATE tins SET verified_ok = ?2, verified_compiler = ?3, verified_run_url = ?4, \
          verified_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE name = ?1"
     };
     d1.prepare(sql)
@@ -780,6 +788,7 @@ pub async fn set_verified(
         name.into(),
         JsValue::from(if ok { 1.0 } else { 0.0 }),
         compiler.map(JsValue::from).unwrap_or(JsValue::NULL),
+        run_url.map(JsValue::from).unwrap_or(JsValue::NULL),
     ])?
     .run()
     .await.at()?;

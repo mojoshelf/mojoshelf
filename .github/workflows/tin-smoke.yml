@@ -126,7 +126,8 @@ jobs:
              | (.name | capture("^smoke \\((?<t>[^,]+), (?<os>[^,]+), (?<ch>[^,)]+)\\)")) as $m
              | {tin: $m.t, channel: $m.ch, ok: (.conclusion == "success")}]
             | group_by([.tin, .channel])
-            | map({name: .[0].tin, channel: .[0].channel, ok: all(.[]; .ok)}
+            | map({name: .[0].tin, channel: .[0].channel, ok: all(.[]; .ok),
+                   run_url: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}
                   + (([$cs, $cn][if .[0].channel == "nightly" then 1 else 0 end]) as $c
                      | if $c == "" then {} else {compiler: $c} end))')
           echo "reporting: $RESULTS"

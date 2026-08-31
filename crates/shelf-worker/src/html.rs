@@ -449,6 +449,11 @@ fn liveliness_line(d: &shelf_core::TinDetail) -> String {
     )
 }
 
+/// Every tin-smoke run. The workflow cannot be filtered per tin from a URL, so
+/// this is the fallback when a verification predates run-url recording.
+const SMOKE_HISTORY: &str =
+    "https://github.com/mojoshelf/mojoshelf/actions/workflows/tin-smoke.yml";
+
 /// "✓ consumer smoke build passed…" line from the weekly tin-smoke run.
 fn verification_line(d: &shelf_core::TinDetail) -> String {
     let when = |at: &str| {
@@ -459,6 +464,15 @@ fn verification_line(d: &shelf_core::TinDetail) -> String {
             format!("{a} ago")
         }
     };
+    // "failing" is only actionable if the logs are one click away, so link the
+    // run behind the verdict — and the workflow's history when there is no run
+    // recorded, which is every verification from before it was stored.
+    let run = |url: Option<&str>| match url {
+        Some(url) => format!(" — <a href=\"{}\">run log</a>", esc(url)),
+        None => format!(
+            " — <a href=\"{SMOKE_HISTORY}\">history</a>",
+        ),
+    };
     match (d.verified_ok, d.verified_at.as_deref()) {
         (Some(true), Some(at)) => {
             let compiler = d
@@ -467,13 +481,15 @@ fn verification_line(d: &shelf_core::TinDetail) -> String {
                 .map(|c| format!(" with mojo-compiler {}", esc(c)))
                 .unwrap_or_default();
             format!(
-                "<p class=\"install-label\">✓ consumer smoke build passed{compiler} — checked {}</p>",
-                when(at)
+                "<p class=\"install-label\">✓ consumer smoke build passed{compiler} — checked {}{}</p>",
+                when(at),
+                run(d.verified_run_url.as_deref()),
             )
         }
         (Some(false), Some(at)) => format!(
-            "<p class=\"install-label\">✗ consumer smoke build failing (checked {})</p>",
-            when(at)
+            "<p class=\"install-label\">✗ consumer smoke build failing (checked {}){}</p>",
+            when(at),
+            run(d.verified_run_url.as_deref()),
         ),
         _ => String::new(),
     }

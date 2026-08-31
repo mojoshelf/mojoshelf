@@ -687,6 +687,9 @@ struct VerifyResult {
     /// absent) is the stable verification.
     #[serde(default)]
     channel: Option<String>,
+    /// The tin-smoke run these results came from.
+    #[serde(default)]
+    run_url: Option<String>,
 }
 
 async fn api_verify(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -702,7 +705,16 @@ async fn api_verify(mut req: Request, ctx: RouteContext<()>) -> Result<Response>
         match db::tin_by_name(&d1, &r.name).await.at()? {
             Some(_) => {
                 let nightly = r.channel.as_deref() == Some("nightly");
-                db::set_verified(&d1, &r.name, r.ok, r.compiler.as_deref(), nightly).await.at()?;
+                db::set_verified(
+                    &d1,
+                    &r.name,
+                    r.ok,
+                    r.compiler.as_deref(),
+                    nightly,
+                    r.run_url.as_deref(),
+                )
+                .await
+                .at()?;
                 updated += 1;
             }
             None => unknown += 1,
