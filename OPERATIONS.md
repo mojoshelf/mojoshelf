@@ -89,9 +89,9 @@ it, which is how two of them survived several deploys. The wasm check is
 equally necessary the other way round: the host build of the Worker is not the
 artefact that gets deployed.
 
-There is no `cargo fmt --check` gate, deliberately: the tree is not currently
-rustfmt-clean, so adding one would fail on untouched files. Formatting the
-whole workspace in one commit would make that gate viable.
+`cargo fmt --all --check` runs too, on default rustfmt settings — the
+workspace has no `rustfmt.toml`. Run `cargo fmt --all` before pushing; a
+formatting failure in CI means exactly that and nothing more.
 
 ## Deploying
 
