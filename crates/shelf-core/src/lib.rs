@@ -5,7 +5,7 @@ pub mod cards;
 use serde::{Deserialize, Serialize};
 
 /// A tin as listed by `GET /api/tins`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TinSummary {
     pub name: String,
     pub url: String,
@@ -69,7 +69,7 @@ pub struct VersionInfo {
 }
 
 /// A tin with its full version history, from `GET /api/tins/:name`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TinDetail {
     pub name: String,
     pub url: String,
@@ -123,6 +123,12 @@ pub struct TinDetail {
     /// The tin-smoke run behind the nightly check.
     #[serde(default)]
     pub nightly_run_url: Option<String>,
+    /// The error the stable check hit, when it failed.
+    #[serde(default)]
+    pub verified_reason: Option<String>,
+    /// The error the nightly check hit, when it failed.
+    #[serde(default)]
+    pub nightly_reason: Option<String>,
     /// mojo-compiler version of the last nightly check (best effort).
     #[serde(default)]
     pub nightly_compiler: Option<String>,

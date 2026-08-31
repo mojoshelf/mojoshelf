@@ -251,11 +251,6 @@ mod tests {
 
     fn detail() -> TinDetail {
         TinDetail {
-            nightly_at: None,
-            nightly_ok: None,
-            nightly_compiler: None,
-            verified_run_url: None,
-            nightly_run_url: None,
             name: "zlib-mojo".into(),
             url: "https://github.com/o/zlib.mojo.git".into(),
             description: Some("zlib bindings".into()),
@@ -269,16 +264,14 @@ mod tests {
             }],
             dependents: vec!["docx".into()],
             kind: "source".into(),
-            channel_version: None,
             stars: Some(4),
             last_push: Some("2026-08-20T00:00:00Z".into()),
             commits_month: Some(3),
             commits_year: Some(30),
-            prev_url: None,
-            url_changed_at: None,
             verified_at: Some("2026-08-25T00:00:00Z".into()),
             verified_ok: Some(true),
             verified_compiler: Some("1.0.0".into()),
+            ..Default::default()
         }
     }
 

@@ -176,6 +176,11 @@ fn page(title: &str, active: &str, body: &str) -> String {
                font-size: .85rem; margin-bottom: .25rem; }}
   .top-links a {{ color: var(--muted); text-decoration: none; }}
   .top-links a:hover {{ color: var(--accent); }}
+  /* The failing check's own error, quoted verbatim under the verdict. */
+  .reason {{ margin: .2rem 0 .8rem; padding: .5rem .6rem; font-size: .8rem;
+            background: var(--danger-bg); color: var(--danger-fg);
+            border: 1px solid var(--danger-border); border-radius: 6px;
+            white-space: pre-wrap; overflow-wrap: anywhere; }}
   .pager {{ display: flex; gap: 1rem; align-items: center; margin-top: 1rem;
            font-size: .9rem; color: var(--muted); }}
   footer {{ margin-top: 2rem; font-size: .8rem; color: var(--muted); }}
@@ -477,6 +482,18 @@ fn liveliness_line(d: &shelf_core::TinDetail) -> String {
 const SMOKE_HISTORY: &str =
     "https://github.com/mojoshelf/mojoshelf/actions/workflows/tin-smoke.yml";
 
+/// The error a failing check hit, shown inline. A link to a run page still
+/// leaves the reader to open a job, expand a step and scroll; the one line
+/// that explains the failure belongs on the page itself.
+fn failure_reason(reason: Option<&str>) -> String {
+    match reason {
+        Some(r) if !r.trim().is_empty() => {
+            format!("<pre class=\"reason\"><code>{}</code></pre>", esc(r.trim()))
+        }
+        _ => String::new(),
+    }
+}
+
 /// Link to the run behind a verdict, or to the workflow's history when the
 /// verification predates run-url recording.
 fn run_link(url: Option<&str>) -> String {
@@ -513,9 +530,10 @@ fn verification_line(d: &shelf_core::TinDetail) -> String {
             )
         }
         (Some(false), Some(at)) => format!(
-            "<p class=\"install-label\">✗ consumer smoke build failing (checked {}){}</p>",
+            "<p class=\"install-label\">✗ consumer smoke build failing (checked {}){}</p>{}",
             when(at),
             run_link(d.verified_run_url.as_deref()),
+            failure_reason(d.verified_reason.as_deref()),
         ),
         _ => String::new(),
     }
@@ -544,7 +562,8 @@ fn nightly_line(d: &shelf_core::TinDetail) -> String {
                 )
             } else {
                 format!(
-                    "<p class=\"install-label\">✗ mojo nightly build failing (checked {when}){link}</p>"
+                    "<p class=\"install-label\">✗ mojo nightly build failing (checked {when}){link}</p>{}",
+                    failure_reason(d.nightly_reason.as_deref()),
                 )
             }
         }

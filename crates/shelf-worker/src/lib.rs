@@ -767,6 +767,9 @@ struct VerifyResult {
     /// The tin-smoke run these results came from.
     #[serde(default)]
     run_url: Option<String>,
+    /// The error a failing check hit, extracted from the job log.
+    #[serde(default)]
+    reason: Option<String>,
 }
 
 async fn api_verify(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -792,6 +795,7 @@ async fn api_verify(mut req: Request, ctx: RouteContext<()>) -> Result<Response>
                     r.compiler.as_deref(),
                     nightly,
                     r.run_url.as_deref(),
+                    r.reason.as_deref(),
                 )
                 .await
                 .at()?;

@@ -304,9 +304,6 @@ mod tests {
 
     fn summary(name: &str, kind: &str, verified: Option<bool>) -> TinSummary {
         TinSummary {
-            nightly_at: None,
-            nightly_ok: None,
-            nightly_compiler: None,
             name: name.into(),
             url: format!("https://github.com/o/{name}.git"),
             description: Some(format!("{name} library")),
@@ -314,15 +311,9 @@ mod tests {
             tags: vec!["parsing".into()],
             latest_version: Some("0.1.0".into()),
             kind: kind.into(),
-            stars: None,
-            forks: None,
-            score: None,
-            last_push: None,
-            prev_url: None,
-            url_changed_at: None,
             verified_at: verified.map(|_| "2026-08-27T00:00:00Z".into()),
             verified_ok: verified,
-            verified_compiler: None,
+            ..Default::default()
         }
     }
 

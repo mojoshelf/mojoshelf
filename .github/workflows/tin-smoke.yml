@@ -120,16 +120,45 @@ jobs:
           fi
           JOBS=$(curl -sf -H "Authorization: Bearer $GH_TOKEN" \
             "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100")
-          RESULTS=$(echo "$JOBS" | jq -c --arg cs "$COMPILER_STABLE" --arg cn "$COMPILER_NIGHTLY" '
+          # Carries fail_job: one failed job per group, whose log supplies the
+          # reason below. Stripped again before reporting.
+          BASE=$(echo "$JOBS" | jq -c --arg cs "$COMPILER_STABLE" --arg cn "$COMPILER_NIGHTLY" '
             [.jobs[]
              | select(.name | startswith("smoke ("))
              | (.name | capture("^smoke \\((?<t>[^,]+), (?<os>[^,]+), (?<ch>[^,)]+)\\)")) as $m
-             | {tin: $m.t, channel: $m.ch, ok: (.conclusion == "success")}]
+             | {tin: $m.t, channel: $m.ch, ok: (.conclusion == "success"), id: .id}]
             | group_by([.tin, .channel])
             | map({name: .[0].tin, channel: .[0].channel, ok: all(.[]; .ok),
+                   fail_job: ([.[] | select(.ok | not) | .id] | first),
                    run_url: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}
                   + (([$cs, $cn][if .[0].channel == "nightly" then 1 else 0 end]) as $c
                      | if $c == "" then {} else {compiler: $c} end))')
+
+          # A link to a run still leaves the reader to open a job, expand a
+          # step and scroll. Pull the line that explains the failure so the tin
+          # page can show it outright.
+          echo "[]" > results.json
+          echo "$BASE" | jq -c '.[]' | while IFS= read -r row; do
+            JOB=$(echo "$row" | jq -r '.fail_job // empty')
+            REASON=""
+            if [ -n "$JOB" ]; then
+              # The logs endpoint redirects to a signed URL that must be
+              # fetched without the Authorization header.
+              LOC=$(curl -s -o /dev/null -w '%{redirect_url}' \
+                -H "Authorization: Bearer $GH_TOKEN" \
+                "https://api.github.com/repos/${{ github.repository }}/actions/jobs/$JOB/logs")
+              LOG=$(curl -sL "$LOC" || true)
+              # pixi prints the innermost cause after ╰─▶; failing that, the
+              # command that gave up.
+              REASON=$(echo "$LOG" | grep -a '╰─▶' | tail -1 || true)
+              [ -z "$REASON" ] && REASON=$(echo "$LOG" | grep -aE 'error:' | tail -1 || true)
+              REASON=$(echo "$REASON" | sed 's/^[0-9][0-9T:.Z-]* //' | tr -d '\r' | cut -c1-300)
+            fi
+            jq -c --argjson r "$(echo "$row" | jq -c 'del(.fail_job)')" --arg reason "$REASON" \
+              '. + [$r + (if $reason == "" then {} else {reason: $reason} end)]' \
+              results.json > results.next && mv results.next results.json
+          done
+          RESULTS=$(cat results.json)
           echo "reporting: $RESULTS"
           curl -sf -X POST "https://mojoshelf.org/api/verify" \
             -H "Authorization: Bearer $SHELF_TOKEN" \
