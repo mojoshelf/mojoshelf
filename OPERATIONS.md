@@ -77,6 +77,22 @@ client-side key that ships in the HTML of every page anyway. Changing it means
 editing `crates/shelf-worker/src/html.rs` and redeploying. Setting it to
 anything not beginning with `phc_` omits the browser snippet entirely.
 
+## CI
+
+`.github/workflows/ci.yml` runs on every push to `main` and every pull
+request: `cargo test --workspace`, and a `cargo check` of the Worker for
+`wasm32-unknown-unknown`.
+
+Both halves matter. The Worker ships as a cdylib for wasm32, and that build
+never compiles `#[cfg(test)]` code — so a broken test fixture is invisible to
+it, which is how two of them survived several deploys. The wasm check is
+equally necessary the other way round: the host build of the Worker is not the
+artefact that gets deployed.
+
+There is no `cargo fmt --check` gate, deliberately: the tree is not currently
+rustfmt-clean, so adding one would fail on untouched files. Formatting the
+whole workspace in one commit would make that gate viable.
+
 ## Deploying
 
 ```sh

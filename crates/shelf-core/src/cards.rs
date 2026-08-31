@@ -252,6 +252,8 @@ mod tests {
             nightly_at: None,
             nightly_ok: None,
             nightly_compiler: None,
+            verified_run_url: None,
+            nightly_run_url: None,
             name: "zlib-mojo".into(),
             url: "https://github.com/o/zlib.mojo.git".into(),
             description: Some("zlib bindings".into()),

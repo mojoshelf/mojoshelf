@@ -1,0 +1,40 @@
+name: ci
+
+# Nothing compiled the Rust on push before this, so breakage that the wasm
+# build cannot see got through: the Worker ships as a cdylib for
+# wasm32-unknown-unknown, which never compiles `#[cfg(test)]` code, and two
+# test-only initializers sat broken across several deploys.
+#
+# Hence both halves below: the tests, and the target that actually ships.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: cargo test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace
+
+  wasm:
+    name: worker builds for wasm32
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check -p shelf-worker --target wasm32-unknown-unknown
