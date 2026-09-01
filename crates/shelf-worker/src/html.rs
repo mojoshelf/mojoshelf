@@ -1054,12 +1054,34 @@ description = "HTTP framework for Mojo"
 tags = ["http", "networking"]
 # other tins this one depends on; omit if none
 tins = ["small_time"]</code></pre>
-<p><code>description</code>, <code>tags</code>, and <code>tins</code> are
-optional. Bump <code>version</code>, commit and push, then run
-<code>shelf publish</code> from the repo root with your publish token
-exported as <code>SHELF_TOKEN</code>; the registry takes the description and
-tags from <code>shelf.toml</code> on every publish. Dependencies must already
-be registered tins.</p>
+<p><code>description</code>, <code>tags</code> and <code>tins</code> are
+optional; the registry re-reads all three from <code>shelf.toml</code> on
+every publish. Dependencies must already be registered tins.</p>
+
+<h3>Publishing it</h3>
+<p>Install the CLI once — this provides both <code>shelf</code> and the
+<code>pixi shelf</code> extension:</p>
+<pre><code>pixi global install --channel https://mojoshelf.org/channel mojoshelf</code></pre>
+<p>No pixi? <code>cargo install --locked --git
+https://github.com/mojoshelf/mojoshelf mojoshelf</code> works too.</p>
+<p>Then, from the tin's repo root:</p>
+<pre><code>export SHELF_TOKEN=shelf_...   # generate one above; shown only once
+shelf publish</code></pre>
+<p>That reads <code>shelf.toml</code>, records the commit <code>HEAD</code>
+points at, and registers the version. Publishing a new version is the same
+three steps every time: bump <code>version</code>, commit and push, run
+<code>shelf publish</code> again.</p>
+<p><strong>It refuses to publish</strong> rather than record something nobody
+can reproduce, so expect to be sent back for any of these:</p>
+<ul>
+<li>no <code>shelf.toml</code> in the current directory — run it from the
+repo root, not a subdirectory</li>
+<li><code>version</code> is not valid semver</li>
+<li>the working tree is dirty — commit or stash first</li>
+<li><code>HEAD</code> is not on any remote branch — push first, because the
+registry pins that exact commit</li>
+<li>no <code>origin</code> remote to take a public URL from</li>
+</ul>
 <p><strong>Naming:</strong> the tin name doubles as a conda package name in
 pixi mode, so pick one that no conda package already uses
 (<code>pixi search &lt;name&gt;</code>) — bindings conventionally take an
