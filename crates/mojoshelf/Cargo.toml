@@ -1,6 +1,6 @@
 [package]
 name = "mojoshelf"
-version = "0.3.0"
+version = "0.4.0"
 edition.workspace = true
 license.workspace = true
 description = "CLI for mojoshelf, the Mojo tin registry (pixi source dependencies or git submodules)"
