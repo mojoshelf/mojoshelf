@@ -60,6 +60,19 @@ enum Cmd {
     Info { name: String },
     /// Publish the version in ./shelf.toml to the registry.
     Publish,
+    /// Run the workspace's `mojolint` (the lint-mojo tin) over its sources.
+    Lint {
+        /// Ask mojo-lsp-server for resolved types and references — the
+        /// compiler's facts behind the rules; slower, catches more.
+        #[arg(long)]
+        lsp: bool,
+        /// The pixi environment holding mojolint and the toolchain.
+        #[arg(short, long, value_name = "ENV")]
+        environment: Option<String>,
+        /// Files or directories to lint (default: src/ and tests/).
+        #[arg(value_name = "PATH")]
+        paths: Vec<String>,
+    },
     /// Generate a modular-community channel recipe from this tin (the
     /// graduation path): preflight checks, recipe.yaml, submission steps.
     Graduate {
@@ -105,6 +118,11 @@ fn main() {
         Cmd::Search { term } => search(&reg, term.as_deref().unwrap_or("")),
         Cmd::Info { name } => info(&reg, &name),
         Cmd::Publish => publish(&reg),
+        Cmd::Lint {
+            lsp,
+            environment,
+            paths,
+        } => pixi::lint(environment.as_deref(), lsp, &paths),
         Cmd::Graduate {
             maintainer,
             license,
