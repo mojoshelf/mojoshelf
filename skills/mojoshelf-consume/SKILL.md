@@ -113,3 +113,20 @@ shelf remove <name>       # remove a tin's submodule
 
 When cloning a repo that consumes tins, use
 `git clone --recurse-submodules` (or `git submodule update --init`).
+
+## Lint
+
+```sh
+pixi shelf add lint-mojo          # once: the linter is a tin, built into the env
+pixi shelf lint                   # src/ and tests/, text rules, exit 1 on findings
+pixi shelf lint --lsp [PATH...]   # with mojo-lsp-server's types and references
+```
+
+`lint-mojo` installs the `mojolint` executable next to the environment's
+`mojo-lsp-server`, so the linter always matches the project's compiler. It
+reports the origin and threading mistakes the compiler accepts (an address
+erased to an untracked pointer as its owner dies; a deref through a copied
+untracked field; a plain store from a parallel task). `shelf lint` passes
+the workspace's `src/` and every `shelf/<tin>/src` as `-I`; pixi-mode tins
+need nothing, their packages are already on the import path. Silence one
+line with `# lint: allow(L001)`. `-e ENV` picks the pixi environment.
