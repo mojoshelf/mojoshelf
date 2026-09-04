@@ -97,6 +97,20 @@ def _stale_deps(repo: Repo, registry: Registry) -> list[PinState]:
     return [s for s in _pin_states(repo, registry) if s.unpublished or s.outdated]
 
 
+def _changed_paths(repo: Repo, old: str, new: str) -> list[str]:
+    """Files that differ between two revisions of `repo`.
+
+    Returns [] when either revision is missing from the local object store —
+    a shallow clone, or a published rev on a branch that was never fetched —
+    so a repo we cannot inspect is reported as nothing rather than as a
+    confident wrong answer.
+    """
+    out, _, code = gitutil.run(
+        ["git", "diff", "--name-only", f"{old}..{new}"], cwd=repo.path, check=False
+    )
+    return out.splitlines() if code == 0 and out else []
+
+
 def _print_findings(findings: list[Finding], verbose: bool = False) -> None:
     shown = [f for f in findings if verbose or f.level != INFO]
     by_repo: dict[str, list[Finding]] = {}
@@ -207,7 +221,7 @@ def cmd_doctor(args, config: Config) -> int:
         if r.publishable and r.version:
             if not registry.known(r.tin):
                 findings.append(Finding(r.slug, INFO, "unregistered", f"{r.tin} is not on the registry"))
-            elif not registry.published(r.tin, r.version):
+            elif not (rel := registry.published(r.tin, r.version)):
                 latest = registry.latest(r.tin)
                 findings.append(
                     Finding(
@@ -217,6 +231,40 @@ def cmd_doctor(args, config: Config) -> int:
                         f"{r.version} is not on the registry (latest is {latest.version if latest else 'none'})",
                     )
                 )
+            elif r.ref and rel.sha != r.ref:
+                # The version is published but main has moved on without a
+                # bump, so two trees answer to one version and everyone
+                # installing gets the older one. Nothing else here notices,
+                # because the version string itself is perfectly fine.
+                #
+                # Whether that matters depends on what moved: a CI or README
+                # commit changes the sha without changing a byte a consumer
+                # installs, and calling that an error would cry wolf on every
+                # repo. Only a change under src/ is a release that is owed.
+                changed = _changed_paths(r, rel.sha, r.ref)
+                packaged = [p for p in changed if p.startswith("src/")]
+                if packaged:
+                    findings.append(
+                        Finding(
+                            r.slug,
+                            ERROR,
+                            "stale-release",
+                            f"{r.version} is published at {rel.sha[:12]} but main is at "
+                            f"{r.ref[:12]} with {len(packaged)} changed file(s) under src/: "
+                            f"the merged work reaches nobody until the version is bumped "
+                            f"and published",
+                        )
+                    )
+                elif changed:
+                    findings.append(
+                        Finding(
+                            r.slug,
+                            INFO,
+                            "unreleased-commits",
+                            f"main is {r.ref[:12]}, past {r.version}'s {rel.sha[:12]}, but "
+                            f"nothing under src/ changed — no release owed",
+                        )
+                    )
 
         if r.publishable and (declared := (r.shelf or {}).get("tins")) is not None:
             actual = {d.pkg for d in r.deps if d.is_package_dep}
