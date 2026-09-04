@@ -69,6 +69,24 @@ def build_parser() -> argparse.ArgumentParser:
     release.add_argument("--no-pr", dest="pr", action="store_false", help="push without opening a PR")
     release.set_defaults(fn=commands.cmd_release)
 
+    merge = sub.add_parser(
+        "merge", help="merge open PRs that are provably nothing but a version bump"
+    )
+    merge.add_argument("--yes", action="store_true", help="actually merge (default is a plan)")
+    merge.add_argument(
+        "--merge-method",
+        default="squash",
+        choices=["squash", "merge", "rebase"],
+        help="how to merge (default: squash, matching how this org merges)",
+    )
+    merge.add_argument(
+        "--allow-no-checks",
+        action="store_true",
+        help="merge a PR whose head revision reports no checks at all "
+        "(a repo without CI — but also a PR whose workflows have not started yet)",
+    )
+    merge.set_defaults(fn=commands.cmd_merge)
+
     repin = sub.add_parser("repin", help="move stale pins to the published revs and open PRs")
     repin.add_argument("--branch", default="repin", help="branch to create (default: repin)")
     repin.add_argument("--title", help="commit subject and PR title")

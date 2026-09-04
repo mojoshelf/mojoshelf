@@ -157,7 +157,82 @@ whose version is *already* ahead of the registry are skipped — the bump has
 happened and it is `publish`'s turn. `--force` includes repos where only CI
 or docs moved, which normally owe no release.
 
-The full release loop is `tins release --yes`, merge, `tins publish --yes`.
+The full release loop is three commands:
+
+```sh
+tins release --org magmalake --yes    # open the version-bump PRs
+tins merge   --org magmalake --yes    # validate and merge them
+tins publish --org magmalake --yes    # push the releases to the registry
+```
+
+### `tins merge`
+
+Merges open pull requests that are **provably nothing but a version bump**,
+and refuses everything else. It is `release`'s counterpart: that command
+opens the PRs, and what is left over is reading each diff to confirm it is
+still only a bump.
+
+```sh
+tins merge --org magmalake          # every open PR, with its verdict
+tins merge --org magmalake --yes    # squash-merge the ones that passed
+```
+
+The value is not the click, it is not having to read the diffs — and that
+review is exactly the kind that decays, because the fifth identical release
+diff gets less attention than the first. So a PR is merged only if **all** of
+these hold, and a failure names the rule rather than saying "invalid":
+
+| rule | a PR fails it when |
+| --- | --- |
+| `foreign-file` | anything outside `pixi.toml` and `shelf.toml` changed — source, CI, README, or `pixi.lock` |
+| `non-version-line` | a changed line is not a bare `version = "x.y.z"` at column zero |
+| `malformed-patch`, `unreadable-patch` | the diff is in a shape the parser does not recognise, or GitHub rendered none |
+| `unbalanced-change` | a version line was removed without one added in its place |
+| `version-disagreement` | the diff names more than one old version, or more than one new one |
+| `malformed-version` | either version is not a plain three-part version |
+| `not-a-bump` | the new version is equal, backwards, or moves more than one part |
+| `incomplete-bump` | a version line elsewhere in the merged tree still reads the old version |
+| `already-published` | the new version is on the registry already |
+| `checks-failing`, `checks-pending`, `no-checks` | CI is not green at the head revision |
+| `not-mergeable`, `draft`, `wrong-base` | GitHub would refuse the merge, or this is not a release PR |
+
+Two of those are worth spelling out.
+
+**`pixi.lock` is not a version file.** The lock records resolved
+dependencies; it does not carry the workspace's own version, so a bump needs
+no relock and a lock in the diff means something else changed too. (If you
+find a repo where the lock *does* carry it, that is worth saying out loud
+rather than relaxing the rule.)
+
+**`incomplete-bump` needs more than the diff.** The version lives in three
+places — `pixi.toml` twice and `shelf.toml` once — and a PR that moves two of
+them has a diff that looks perfect. So the version files are also read at the
+head revision, and every version line in them must read the new version.
+Anything less is `doctor`'s `version-mismatch` waiting to happen: `shelf
+publish` reads one number and pixi reads another.
+
+The one soft rule is `registry-behind`: if the *old* version is not what the
+registry currently publishes, that is a warning with an explanation, not a
+refusal — a repo can legitimately be several bumps ahead of the registry. The
+new version already being published is a hard stop, because `tins publish`
+skips a version the registry has and the merged code would never ship.
+
+Merging is squash by default, matching how this org merges; `--merge-method`
+takes `merge` or `rebase`. The merge passes `--match-head-commit`, so a push
+landing between the validation and the merge aborts it rather than merging a
+diff nobody checked. `--allow-no-checks` downgrades an empty check rollup to
+a warning, for a repo with no CI — but note that an empty rollup is also what
+a PR looks like in the seconds between the push and its workflows starting,
+which is why it is a refusal by default.
+
+Approval is not part of this. GitHub refuses `gh pr review --approve` on your
+own pull request and these PRs are opened under your account, so merging is
+the whole operation.
+
+The validator fails closed on purpose: anything it cannot parse confidently
+is a refusal. One that accepted a smuggled source edit would be worse than no
+command at all, because it would turn a careful habit into a rubber stamp.
+That is the part with the most tests.
 
 ### `tins publish`
 
@@ -212,8 +287,10 @@ a worktree beside it (`../<repo>.<branch>`), so a checkout you were in the
 middle of something in is never checked out, reset, stashed or pulled from
 under you. `publish` uses a throwaway worktree it removes afterwards.
 
-`sweep` and `repin` take `--dry-run`; `publish` prints a plan and does
-nothing until `--yes`.
+`sweep` and `repin` take `--dry-run`; `publish`, `release` and `merge` print
+a plan and do nothing until `--yes`. `merge` never touches a checkout at
+all — it reads GitHub and the registry, and the only thing it writes is the
+merge itself.
 
 ## Development
 
@@ -224,7 +301,10 @@ pixi run check   # tests plus a compile pass
 
 The manifest edits are line-surgical rather than a round-trip through a
 TOML writer, because these manifests carry comments explaining why each pin
-is what it is and a round-trip drops them. That is the part with tests.
+is what it is and a round-trip drops them. That, and the `merge` validator in
+`versionpatch.py`, are the parts with tests — the validator's cases are
+fixture patches taken from real pull requests, so they do not depend on
+anything being open today.
 
 CI runs `pixi run check` on ubuntu and macos for changes under `tins/`.
 

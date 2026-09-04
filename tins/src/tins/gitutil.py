@@ -7,6 +7,7 @@ this machine), and nothing mutating ever runs in a shared checkout.
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 from pathlib import Path
@@ -172,6 +173,82 @@ def create_pr(org: str, name: str, branch: str, title: str, body: str) -> str:
         ]
     )
     return out.splitlines()[-1] if out else ""
+
+
+PR_FIELDS = (
+    "number,title,url,headRefName,headRefOid,baseRefName,isDraft,isCrossRepository,"
+    "mergeable,mergeStateStatus,author,statusCheckRollup"
+)
+
+
+def open_prs(org: str, name: str) -> list[dict] | None:
+    """Every open PR of a repo, with the fields `tins merge` judges it on.
+
+    None means the listing failed. A repo we could not ask about must not
+    read as a repo with nothing open — that is a silent gap in a report
+    whose whole job is to be exhaustive.
+    """
+    out, _, code = run(
+        ["gh", "pr", "list", "--repo", f"{org}/{name}", "--state", "open",
+         "--limit", "100", "--json", PR_FIELDS],
+        check=False,
+    )
+    if code != 0:
+        return None
+    try:
+        return json.loads(out) if out else []
+    except json.JSONDecodeError:
+        return None
+
+
+def pr_files(org: str, name: str, number: int) -> list[dict] | None:
+    """The changed files of a PR, each with its patch.
+
+    Returns None rather than [] when the call fails: an empty changed-file
+    set and an unanswered request must not look alike to a validator whose
+    whole job is to refuse what it cannot see. `--paginate` matters because
+    the endpoint returns thirty files a page, and a truncated file list
+    would be a diff we only half read.
+    """
+    out, _, code = run(
+        ["gh", "api", "--paginate", "--slurp", f"repos/{org}/{name}/pulls/{number}/files"],
+        check=False,
+    )
+    if code != 0:
+        return None
+    try:
+        pages = json.loads(out)  # --slurp gives one array per page
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(pages, list):
+        return None
+    return [f for page in pages for f in page]
+
+
+def file_at_ref(org: str, name: str, path: str, ref: str) -> str | None:
+    """A file's text at a revision, or None if the repo has no such file."""
+    out, _, code = run(
+        ["gh", "api", "-H", "Accept: application/vnd.github.raw",
+         f"repos/{org}/{name}/contents/{path}?ref={ref}"],
+        check=False,
+    )
+    return out if code == 0 else None
+
+
+def merge_pr(
+    org: str, name: str, number: int, method: str = "squash", head_sha: str | None = None
+) -> tuple[str, int]:
+    """Merge one PR, refusing if its head has moved since we validated it.
+
+    `--match-head-commit` is the whole reason this is safe to automate: the
+    validation read one revision, and without the guard a push landing
+    between the read and the merge would merge a diff nobody checked.
+    """
+    args = ["gh", "pr", "merge", str(number), "--repo", f"{org}/{name}", f"--{method}"]
+    if head_sha:
+        args += ["--match-head-commit", head_sha]
+    out, err, code = run(args, check=False)
+    return (out or err), code
 
 
 def commit_message(title: str, body: str, co_authored_by: str) -> str:
