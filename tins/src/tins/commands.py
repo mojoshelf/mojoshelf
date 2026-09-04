@@ -431,7 +431,11 @@ def cmd_repin(args, config: Config) -> int:
             bumped = f"; {r.version} -> {new_version}"
 
         _lock(config, wt)
-        moved = ", ".join(f"{s.dep.pkg} -> {s.latest_version}" for s in stale)
+        # One entry per package, not one per table it is pinned in.
+        moved = ", ".join(
+            f"{pkg} -> {version}"
+            for pkg, version in dict.fromkeys((s.dep.pkg, s.latest_version) for s in stale)
+        )
         title = args.title or f"Re-pin {', '.join(sorted({s.dep.pkg for s in stale}))}"
         body = (
             f"Pins moved to the newest published release{bumped}.\n\n"
