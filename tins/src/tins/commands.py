@@ -97,6 +97,24 @@ def _stale_deps(repo: Repo, registry: Registry) -> list[PinState]:
     return [s for s in _pin_states(repo, registry) if s.unpublished or s.outdated]
 
 
+def _read_body(body_file: str | None, body: str | None) -> str:
+    """The PR/commit body, from a file or the flag.
+
+    A missing --body-file is a typo, and it surfaces before any repo is
+    touched: finding out after eight of ten repos have branches pushed is
+    the expensive way to learn it.
+    """
+    if not body_file:
+        return body or ""
+    p = Path(body_file).expanduser()
+    if not p.is_file():
+        raise SystemExit(f"no such body file: {p}")
+    try:
+        return p.read_text()
+    except OSError as e:
+        raise SystemExit(f"cannot read body file {p}: {e}") from e
+
+
 def _changed_paths(repo: Repo, old: str, new: str) -> list[str]:
     """Files that differ between two revisions of `repo`.
 
@@ -325,7 +343,7 @@ def cmd_sweep(args, config: Config) -> int:
     else:
         raise SystemExit("give a command after -- or pass --script")
 
-    body = Path(args.body_file).read_text() if args.body_file else (args.body or "")
+    body = _read_body(args.body_file, args.body)
     results: list[tuple[str, str]] = []
 
     for r in sorted(repos, key=lambda r: (r.org, r.name)):
@@ -334,6 +352,11 @@ def cmd_sweep(args, config: Config) -> int:
             results.append((r.slug, f"would run in {r.worktree_path(args.branch)}"))
             continue
         sha = r.ref or gitutil.fetch_main(r.path, r.org, r.name)
+        # A sweep is usually aimed wider than it lands — a pin bump touches
+        # ten repos out of nineteen. Remember whether this worktree is ours
+        # so the ones that change nothing can be cleaned up instead of left
+        # scattered around the tree.
+        created = not r.worktree_path(args.branch).exists()
         wt = _worktree_on_branch(r, args.branch, sha)
         env = os.environ | {
             "TINS_REPO": r.name,
@@ -348,6 +371,11 @@ def cmd_sweep(args, config: Config) -> int:
             results.append((r.slug, f"command failed [{code}]"))
             continue
         if not gitutil.is_dirty(wt):
+            if created:
+                gitutil.remove_worktree(r.path, wt)
+                gitutil.run(
+                    ["git", "branch", "-D", args.branch], cwd=r.path, check=False
+                )
             print("  no change")
             results.append((r.slug, "no change"))
             continue
@@ -511,4 +539,105 @@ def cmd_repin(args, config: Config) -> int:
         print("\n--- summary")
         for slug, outcome in results:
             print(f"{slug}: {outcome}")
+    return 0
+
+
+# --------------------------------------------------------------- release
+
+
+def _commits_between(repo: Repo, old: str, new: str) -> list[str]:
+    """Commit subjects in `old..new`, newest first."""
+    out, _, code = gitutil.run(
+        ["git", "log", "--format=%s", f"{old}..{new}"], cwd=repo.path, check=False
+    )
+    return out.splitlines() if code == 0 and out else []
+
+
+def cmd_release(args, config: Config) -> int:
+    """Open a version-bump PR for every tin whose published rev is behind main.
+
+    This is the other half of `doctor`'s stale-release finding: that check
+    says a release is owed, and this opens it. The bump is the whole change —
+    the code is already on main and already reviewed.
+    """
+    registry = Registry(config.registry)
+    repos = select(discover(config, fetch=True), args.org, args.repo)
+
+    plan: list[tuple[Repo, str, str, list[str], list[str]]] = []
+    for r in topo_order(repos):
+        if not r.publishable or not r.version or not r.ref:
+            continue
+        rel = registry.published(r.tin, r.version)
+        if not rel:
+            # The version is already ahead of the registry — the bump has
+            # happened and it is `tins publish`'s turn, not ours.
+            continue
+        if rel.sha == r.ref:
+            continue
+        changed = _changed_paths(r, rel.sha, r.ref)
+        packaged = [p for p in changed if p.startswith("src/")]
+        if not packaged and not args.force:
+            continue
+        plan.append(
+            (r, r.version, manifest.bump(r.version, args.bump), packaged, changed)
+        )
+
+    if not plan:
+        print("no release owed")
+        return 0
+
+    print("will open version-bump PRs for:")
+    for r, old, new, packaged, changed in plan:
+        print(f"  {r.tin}  {old} -> {new}   ({len(packaged)} src file(s) of {len(changed)})")
+    if not args.yes:
+        print("\nre-run with --yes to open them")
+        return 0
+
+    results: list[tuple[str, str]] = []
+    for r, old, new, packaged, changed in plan:
+        print(f"\n=== {r.slug}")
+        branch = args.branch or f"release-{new}"
+        wt = _worktree_on_branch(r, branch, r.ref)
+
+        touched = 0
+        for name in ("pixi.toml", "shelf.toml"):
+            f = wt / name
+            if not f.is_file():
+                continue
+            text, n = manifest.set_version(f.read_text(), old, new)
+            if n:
+                f.write_text(text)
+                touched += n
+        if touched == 0:
+            print(f"  ! no version line matched {old} — skipping")
+            results.append((r.slug, f"no version line matched {old}"))
+            continue
+        print(f"  {old} -> {new} ({touched} line(s))")
+
+        subjects = _commits_between(r, registry.published(r.tin, old).sha, r.ref)
+        body = (
+            f"Version bump only. `{old}` is published at "
+            f"`{registry.published(r.tin, old).sha[:12]}` and main is at `{r.ref[:12]}` "
+            f"with {len(packaged)} changed file(s) under `src/`, so nobody installing "
+            f"the tin gets any of them.\n\n"
+            + ("**Changes since the published revision**\n\n"
+               + "\n".join(f"- {s}" for s in subjects[:20])
+               + ("\n- …\n" if len(subjects) > 20 else "\n")
+               if subjects else "")
+            + "\n**Files under `src/`**\n\n"
+            + "\n".join(f"- `{p}`" for p in packaged[:20])
+            + ("\n- …\n" if len(packaged) > 20 else "\n")
+        )
+        title = args.title or f"Release {new}"
+        message = gitutil.commit_message(title, body, config.co_authored_by)
+        commit = gitutil.commit(wt, message, config.author_name, config.author_email)
+        gitutil.push(wt, r.org, r.name, branch)
+        url = gitutil.create_pr(r.org, r.name, branch, title, body) if args.pr else ""
+        print(f"  {commit[:8]} pushed{'  ' + url if url else ''}")
+        results.append((r.slug, url or commit[:8]))
+
+    print("\n--- summary")
+    for slug, outcome in results:
+        print(f"{slug}: {outcome}")
+    print("\nmerge them, then `tins publish --yes`")
     return 0

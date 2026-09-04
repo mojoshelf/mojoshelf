@@ -139,6 +139,26 @@ lock` before committing; `--no-pr` pushes without opening one.
 Only tracked files are committed, so build logs left in a worktree do not
 end up in the PR.
 
+### `tins release`
+
+Opens a version-bump PR for every tin whose published revision is behind
+main with `src/` changes — the other half of `doctor`'s `stale-release`
+finding. The bump is the whole diff; the code is already on main and
+already reviewed.
+
+```sh
+tins release --org magmalake          # print the plan
+tins release --org magmalake --yes    # open the PRs
+```
+
+The PR body is generated: the published revision, main's revision, the
+commit subjects between them, and the `src/` files that changed. Repos
+whose version is *already* ahead of the registry are skipped — the bump has
+happened and it is `publish`'s turn. `--force` includes repos where only CI
+or docs moved, which normally owe no release.
+
+The full release loop is `tins release --yes`, merge, `tins publish --yes`.
+
 ### `tins publish`
 
 Publishes every selected tin whose `shelf.toml` version is not yet on the
