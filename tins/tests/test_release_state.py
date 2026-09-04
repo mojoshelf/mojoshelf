@@ -76,3 +76,25 @@ class TestChangedPaths(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestBodyFile(unittest.TestCase):
+    """--body-file must fail before any repo is touched, not mid-sweep."""
+
+    def test_missing_file_is_a_clean_exit_not_a_traceback(self):
+        with self.assertRaises(SystemExit) as cm:
+            commands._read_body("/nonexistent/body.md", None)
+        self.assertIn("no such body file", str(cm.exception))
+
+    def test_file_contents_are_returned(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
+            f.write("hello\n")
+            name = f.name
+        try:
+            self.assertEqual(commands._read_body(name, None), "hello\n")
+        finally:
+            Path(name).unlink()
+
+    def test_body_flag_is_the_fallback_and_empty_is_allowed(self):
+        self.assertEqual(commands._read_body(None, "inline"), "inline")
+        self.assertEqual(commands._read_body(None, None), "")

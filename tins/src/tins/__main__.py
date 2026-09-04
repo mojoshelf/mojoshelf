@@ -54,6 +54,21 @@ def build_parser() -> argparse.ArgumentParser:
     publish.add_argument("--force", action="store_true", help="publish even with stale package pins")
     publish.set_defaults(fn=commands.cmd_publish)
 
+    release = sub.add_parser(
+        "release", help="open a version-bump PR for every tin whose published rev is behind main"
+    )
+    release.add_argument("--yes", action="store_true", help="actually open them (default is a plan)")
+    release.add_argument("--bump", default="patch", choices=["patch", "minor", "major"])
+    release.add_argument("--branch", help="branch name (default: release-<new version>)")
+    release.add_argument("--title", help="commit subject and PR title (default: Release <new version>)")
+    release.add_argument(
+        "--force",
+        action="store_true",
+        help="include repos where only CI or docs changed since the published rev",
+    )
+    release.add_argument("--no-pr", dest="pr", action="store_false", help="push without opening a PR")
+    release.set_defaults(fn=commands.cmd_release)
+
     repin = sub.add_parser("repin", help="move stale pins to the published revs and open PRs")
     repin.add_argument("--branch", default="repin", help="branch to create (default: repin)")
     repin.add_argument("--title", help="commit subject and PR title")
