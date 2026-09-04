@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import os
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import gitutil, manifest
+from . import gitutil, manifest, versionpatch
 from .config import Config
 from .registry import Registry
 from .workspace import GitDep, Repo, discover, select, topo_order
@@ -639,5 +639,286 @@ def cmd_release(args, config: Config) -> int:
     print("\n--- summary")
     for slug, outcome in results:
         print(f"{slug}: {outcome}")
-    print("\nmerge them, then `tins publish --yes`")
+    print("\n`tins merge --yes`, then `tins publish --yes`")
     return 0
+
+
+# ----------------------------------------------------------------- merge
+
+
+# A check that finished in one of these did not fail. SKIPPED and NEUTRAL
+# are how a workflow says "not applicable here", which is what GitHub's own
+# required-checks rule treats them as; anything else — failure, cancelled,
+# timed out, action required — is a refusal.
+GOOD_CONCLUSIONS = {"SUCCESS", "SKIPPED", "NEUTRAL"}
+
+# How many failures of one rule to print before summarising the rest.
+PROBLEMS_PER_CODE = 3
+
+# `mergeStateStatus` values that mean GitHub itself would refuse or would
+# merge something other than what we read. CLEAN, HAS_HOOKS and UNSTABLE are
+# the ones we let through — UNSTABLE only ever means a non-required check is
+# unhappy, and the check rule below judges those on its own terms.
+UNMERGEABLE_STATES = {
+    "DIRTY": "the branch conflicts with main",
+    "BLOCKED": (
+        "branch protection blocks the merge — a required review, most likely, and GitHub "
+        "will not let you approve your own pull request"
+    ),
+    "BEHIND": "the branch is behind main and this repo requires branches to be up to date",
+    "UNKNOWN": "GitHub has not finished computing the merge state; try again in a moment",
+}
+
+
+@dataclass
+class Verdict:
+    """One open pull request and everything `tins merge` concluded about it."""
+
+    org: str
+    name: str
+    number: int
+    title: str
+    url: str
+    head: str
+    notes: list[Finding] = field(default_factory=list)
+
+    @property
+    def key(self) -> str:
+        return f"{self.org}/{self.name}#{self.number}"
+
+    @property
+    def failures(self) -> list[Finding]:
+        return [f for f in self.notes if f.level == ERROR]
+
+    @property
+    def ok(self) -> bool:
+        return not self.failures
+
+
+def _check_state(rollup: list[dict] | None) -> tuple[str, str]:
+    """A PR's CI as (state, description), where state is green/pending/failing/none.
+
+    Two shapes arrive in one list: GitHub Actions jobs (`CheckRun`, with a
+    status and a conclusion) and commit statuses posted by other services
+    (`StatusContext`, with a single state). Anything that is neither is
+    counted as failing rather than ignored.
+    """
+    if not rollup:
+        return "none", "no checks reported for the head revision"
+    pending, failing, good = [], [], 0
+    for c in rollup:
+        label = c.get("name") or c.get("context") or "?"
+        if c.get("__typename") == "CheckRun" or "conclusion" in c:
+            status = (c.get("status") or "").upper()
+            conclusion = (c.get("conclusion") or "").upper()
+            if status != "COMPLETED":
+                pending.append(f"{label} ({status.lower() or 'no status'})")
+            elif conclusion in GOOD_CONCLUSIONS:
+                good += 1
+            else:
+                failing.append(f"{label} ({conclusion.lower() or 'no conclusion'})")
+        elif "state" in c:
+            state = (c.get("state") or "").upper()
+            if state in ("PENDING", "EXPECTED"):
+                pending.append(f"{label} (pending)")
+            elif state == "SUCCESS":
+                good += 1
+            else:
+                failing.append(f"{label} ({state.lower() or 'no state'})")
+        else:
+            failing.append(f"{label} (unrecognised check)")
+    total = len(rollup)
+    if failing:
+        return "failing", f"{len(failing)} of {total} failing: {', '.join(failing[:6])}"
+    if pending:
+        return "pending", f"{len(pending)} of {total} still running: {', '.join(pending[:6])}"
+    return "green", f"{good} of {total} passed"
+
+
+def _judge_pr(repo: Repo, pr: dict, registry: Registry, args) -> Verdict:
+    """Every rule, applied to one pull request.
+
+    The order is the order a person would read them in: what changed, what
+    the change says, whether the registry agrees, and only then whether
+    GitHub would let the merge happen. A failure names its rule, because
+    "invalid" does not tell you which line to go and look at.
+    """
+    v = Verdict(
+        org=repo.org,
+        name=repo.name,
+        number=pr["number"],
+        title=pr.get("title", ""),
+        url=pr.get("url", ""),
+        head=pr.get("headRefOid", ""),
+    )
+
+    def note(level: str, code: str, message: str) -> None:
+        v.notes.append(Finding(v.key, level, code, message))
+
+    if (base := pr.get("baseRefName")) != "main":
+        note(ERROR, "wrong-base", f"targets {base}, not main; this is not a release PR")
+
+    files = gitutil.pr_files(repo.org, repo.name, v.number)
+    if files is None:
+        note(ERROR, "unreadable-diff", "could not read the changed files from GitHub")
+        return v
+    bump = versionpatch.check_changed_files(
+        [
+            versionpatch.ChangedFile(f.get("filename", "?"), f.get("status", "?"), f.get("patch"))
+            for f in files
+        ]
+    )
+    # One repin PR moves the same six pins in three tables, which is
+    # thirty-odd identical refusals. Three of each is enough to see what the
+    # rule caught; the count says how much more there was.
+    seen: dict[str, int] = {}
+    for p in bump.problems:
+        seen[p.code] = n = seen.get(p.code, 0) + 1
+        if n <= PROBLEMS_PER_CODE:
+            note(ERROR, p.code, p.message)
+    for code, n in seen.items():
+        if n > PROBLEMS_PER_CODE:
+            note(ERROR, code, f"… and {n - PROBLEMS_PER_CODE} more like that")
+    if not bump.ok:
+        return v
+    note(INFO, "version-bump", bump.summary())
+
+    # The diff cannot show a version line the PR failed to touch, so read
+    # the version files as they will be once merged.
+    texts = {
+        name: gitutil.file_at_ref(repo.org, repo.name, name, v.head)
+        for name in versionpatch.VERSION_FILES
+    }
+    if texts["pixi.toml"] is None:
+        note(ERROR, "unreadable-head", f"cannot read pixi.toml at {v.head[:12]}")
+        return v
+    for p in versionpatch.check_head_versions(texts, bump.new):
+        note(ERROR, p.code, p.message)
+
+    # Registry coherence. A new version that is already published is a hard
+    # stop — merging it strands the release, because `tins publish` skips a
+    # version the registry already has and the code never ships. An old
+    # version that is not the published one is only a warning: a repo can
+    # legitimately be several bumps ahead of the registry.
+    if repo.tin and registry.known(repo.tin):
+        if registry.published(repo.tin, bump.new):
+            note(
+                ERROR,
+                "already-published",
+                f"{repo.tin} {bump.new} is already on the registry; merging this would "
+                f"produce a version `tins publish` skips, and the code would never ship",
+            )
+        latest = registry.latest(repo.tin)
+        if latest and latest.version != bump.old:
+            note(
+                WARN,
+                "registry-behind",
+                f"the registry publishes {repo.tin} {latest.version}, not {bump.old}; the "
+                f"repo may simply be bumps ahead of it — worth a look, not a refusal",
+            )
+
+    state, detail = _check_state(pr.get("statusCheckRollup"))
+    if state == "green":
+        note(INFO, "checks", detail)
+    elif state == "none":
+        # An empty rollup is also what a PR looks like in the seconds
+        # between the push and the workflows starting, and merging then
+        # merges an untested tree with a green-looking summary.
+        note(
+            WARN if args.allow_no_checks else ERROR,
+            "no-checks",
+            f"{detail}; either this repo has no CI or the workflows have not started yet"
+            + (" (allowed by --allow-no-checks)" if args.allow_no_checks else ""),
+        )
+    else:
+        note(ERROR, f"checks-{state}", detail)
+
+    if pr.get("isDraft"):
+        note(ERROR, "draft", "the pull request is a draft; a draft is never merged")
+    mergeable = pr.get("mergeable")
+    blocked = UNMERGEABLE_STATES.get(pr.get("mergeStateStatus") or "UNKNOWN")
+    if mergeable != "MERGEABLE":
+        note(
+            ERROR,
+            "not-mergeable",
+            f"GitHub reports mergeable={mergeable}"
+            + (
+                "; it has not finished computing this yet, so try again in a moment"
+                if mergeable == "UNKNOWN"
+                else ""
+            ),
+        )
+    elif blocked:
+        note(ERROR, "not-mergeable", blocked)
+    else:
+        note(INFO, "mergeable", f"mergeable, merge state {pr.get('mergeStateStatus')}")
+    return v
+
+
+def cmd_merge(args, config: Config) -> int:
+    """Merge open pull requests that are provably nothing but a version bump.
+
+    The counterpart to `release`: that command opens these PRs, and the work
+    left over is reading each diff to confirm it is still only a bump.
+    Doing that by hand is exactly the review that decays — the fifth
+    identical diff gets less attention than the first — so the rules live in
+    `versionpatch` and this prints what each one concluded.
+
+    Approval is not part of the loop: GitHub refuses `gh pr review
+    --approve` on your own pull request and these are opened under the
+    owner's account, so merging is the whole operation.
+
+    Discovery does not fetch. Every fact that decides a verdict comes from
+    GitHub or the registry; the local checkouts are here only to say which
+    repos exist and which tin each one publishes.
+    """
+    registry = Registry(config.registry)
+    repos = select(discover(config), args.org, args.repo, args.tins)
+
+    verdicts: list[Verdict] = []
+    unreadable: list[str] = []
+    for r in sorted(repos, key=lambda r: (r.org, r.name)):
+        prs = gitutil.open_prs(r.org, r.name)
+        if prs is None:
+            unreadable.append(r.slug)
+            continue
+        for pr in prs:
+            verdicts.append(_judge_pr(r, pr, registry, args))
+
+    for slug in unreadable:
+        print(f"! {slug}: could not list its pull requests; it is not covered by this report")
+    if not verdicts:
+        print("no open pull requests")
+        return 1 if unreadable else 0
+
+    marks = {ERROR: "✗", WARN: "!", INFO: "✓"}
+    for v in verdicts:
+        print(f"\n{v.key}  {v.title}")
+        if v.url:
+            print(f"  {v.url}")
+        for f in v.notes:
+            print(f"  {marks[f.level]} {f.code}: {f.message}")
+        print(f"  => {'MERGE' if v.ok else 'REFUSE'}")
+
+    passing = [v for v in verdicts if v.ok]
+    print(
+        f"\n--- {len(verdicts)} open pull request(s): "
+        f"{len(passing)} pure version bump(s), {len(verdicts) - len(passing)} refused"
+        + (f"; {len(unreadable)} repo(s) unread" if unreadable else "")
+    )
+    if not passing:
+        return 1 if unreadable else 0
+    if not args.yes:
+        print(f"re-run with --yes to {args.merge_method}-merge the {len(passing)} that passed")
+        return 1 if unreadable else 0
+
+    failed = 0
+    for v in passing:
+        out, code = gitutil.merge_pr(
+            v.org, v.name, v.number, args.merge_method, head_sha=v.head or None
+        )
+        failed += code != 0
+        print(f"{v.key}: {'merged' if code == 0 else 'FAILED'} {out.splitlines()[-1] if out else ''}")
+    if not failed:
+        print("\nnow `tins publish --yes`")
+    return 1 if failed or unreadable else 0
