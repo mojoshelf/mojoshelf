@@ -1,0 +1,6 @@
+.pixi/
+__pycache__/
+*.pyc
+
+# Your own roots and identity; start from tins.example.toml
+tins.toml

@@ -1,0 +1,17 @@
+[workspace]
+name = "tins"
+description = "Release plumbing for a polyrepo of mojoshelf tins"
+channels = ["conda-forge"]
+platforms = ["osx-arm64", "linux-64"]
+version = "0.1.0"
+
+[dependencies]
+python = ">=3.12,<3.14"
+
+[activation.env]
+PYTHONPATH = "src"
+
+[tasks]
+tins = "python -m tins"
+test = "python -m unittest discover -s tests -v"
+check = { depends-on = ["test"], cmd = "python -m compileall -q src" }

@@ -1,0 +1,3 @@
+#!/bin/sh
+# Run tins from anywhere: put this directory on your PATH.
+exec pixi run --manifest-path "$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)/pixi.toml" tins "$@"
