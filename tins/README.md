@@ -96,8 +96,10 @@ Checks every repo against the registry and exits non-zero on an error.
 | `version-mismatch` | error | the three places that carry the version disagree |
 | `unpublished-pin` | error | a pin names a revision the registry never published |
 | `outdated-pin` | warning | a pin names an older release than the newest |
+| `stale-release` | error | the published version's revision is behind main, and `src/` changed |
 | `unpublished` | warning | the local version is not on the registry yet |
 | `shelf-tins-drift` | warning | `shelf.toml`'s `tins` list omits something the package pins |
+| `unreleased-commits` | info | main is past the published revision, but only CI/docs moved |
 | `behind`, `dirty`, `duplicate-checkout` | info | local checkout state; `-v` to show |
 
 `unpublished-pin` and `outdated-pin` are deliberately different findings.
@@ -105,6 +107,13 @@ Pinning last month's release is a choice. Pinning a revision the registry
 never saw is the defect that has broken installs twice: pixi resolves the
 tin's own dependency at the published revision and your pin at another one,
 gets two source records for a single package, and fails.
+
+`stale-release` is the one that catches merged-but-unpublished work. A
+version string stays valid while the tree it names falls behind main, so
+nothing else notices that a merged fix reaches nobody. It fires only when
+`src/` differs between the published revision and main — a README or CI
+commit moves the sha without changing a byte anyone installs, and is
+reported as `unreleased-commits` instead.
 
 **Doctor reads `origin/main`, not your working tree.** It fetches first, so
 the answer describes what a consumer would install rather than what happens
