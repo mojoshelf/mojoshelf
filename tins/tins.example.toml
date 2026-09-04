@@ -1,0 +1,25 @@
+# Where the checkouts are and who commits. The org of each repo comes from
+# its git remote, not from the directory it sits in, because the clones are
+# not grouped by org on disk.
+
+[defaults]
+registry = "https://mojoshelf.org"
+# Locks are written by this pixi, not whatever `pixi` is on PATH: a newer
+# pixi refuses a lock an older one wrote, and the repos are on 0.78.0.
+pixi = "0.78.0"
+author = "Marius S <39998+winding-lines@users.noreply.github.com>"
+co_authored_by = "Claude Fable 5 <noreply@anthropic.com>"
+
+[discovery]
+roots = [
+    "~/dev",
+    "~/dev/magmalake",
+    "~/dev/labelrefinery",
+]
+# Repos to leave alone (by name or org/name).
+ignore = [
+    "mojoshelf",
+    "modular",
+    "modular-forked",
+    "modular-local",
+]
