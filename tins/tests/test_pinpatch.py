@@ -40,6 +40,48 @@ class TestAVerifiedPinMove(unittest.TestCase):
         self.assertEqual(v.lines, {"pixi.toml": 6})
 
 
+def bump_patch(old="0.6.6", new="0.6.7"):
+    return f'@@ -1,2 +1,2 @@\n-version = "{old}"\n+version = "{new}"\n'
+
+
+class TestABumpRidingAlong(unittest.TestCase):
+    """`repin` bumps the version when a packaged pin moves, so the two
+    arrive in one diff. The bump is held to the release rules anyway --
+    otherwise a pin move is a way to smuggle any version past the
+    validator."""
+
+    def test_a_pin_move_with_a_forward_bump_is_accepted(self):
+        v = check_pin_move(
+            files(pin_patch()) + files(bump_patch(), "shelf.toml"), registry(NEW)
+        )
+        self.assertTrue(v.ok, v.problems)
+        self.assertEqual(v.bump, ("0.6.6", "0.6.7", "patch"))
+
+    def test_a_version_going_backwards_is_refused(self):
+        v = check_pin_move(
+            files(pin_patch()) + files(bump_patch("0.6.6", "0.6.5"), "shelf.toml"), registry(NEW)
+        )
+        self.assertFalse(v.ok)
+        self.assertEqual([p.code for p in v.problems], ["not-a-bump"])
+
+    def test_a_version_skipping_ahead_is_refused(self):
+        v = check_pin_move(
+            files(pin_patch()) + files(bump_patch("0.6.6", "0.9.0"), "shelf.toml"), registry(NEW)
+        )
+        self.assertFalse(v.ok)
+        self.assertEqual([p.code for p in v.problems], ["not-a-bump"])
+
+    def test_two_different_new_versions_are_refused(self):
+        v = check_pin_move(
+            files(pin_patch())
+            + files(bump_patch(), "shelf.toml")
+            + [ChangedFile("pixi.toml", "modified", bump_patch("0.6.6", "0.7.0"))],
+            registry(NEW),
+        )
+        self.assertFalse(v.ok)
+        self.assertIn("ambiguous-version", [p.code for p in v.problems])
+
+
 class TestWhatItRefuses(unittest.TestCase):
     """The rules that make accepting a forty-character hex string safe."""
 

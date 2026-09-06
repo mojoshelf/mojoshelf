@@ -95,6 +95,7 @@ class PinVerdict:
     """
 
     moves: dict[str, tuple[str, str]] = field(default_factory=dict)  # pkg -> (old, new)
+    bump: tuple[str, str, str] | None = None  # (old, new, kind), when one rides along
     lines: dict[str, int] = field(default_factory=dict)  # file -> pin lines changed
     problems: list[Problem] = field(default_factory=list)
 
@@ -107,7 +108,8 @@ class PinVerdict:
             f"{pkg} {old[:12]} -> {new[:12]}" for pkg, (old, new) in sorted(self.moves.items())
         )
         files = ", ".join(f"{name} ({n} line(s))" for name, n in sorted(self.lines.items()))
-        return f"{moves} in {files}"
+        bumped = f"; {self.bump[0]} -> {self.bump[1]} ({self.bump[2]})" if self.bump else ""
+        return f"{moves} in {files}{bumped}"
 
 
 @dataclass
@@ -327,15 +329,21 @@ def check_head_versions(texts: dict[str, str | None], new: str) -> list[Problem]
     return problems
 
 
-def scan_pin_patch(filename: str, patch: str | None) -> tuple[list[PinLine], list[Problem]]:
+def scan_pin_patch(
+    filename: str, patch: str | None
+) -> tuple[list[PinLine], list[str], list[str], list[Problem]]:
     """Every changed pin line of one file's patch, or a reason to refuse.
 
     Same shape and same strictness as `scan_patch`: a changed line that is
     neither a pin line nor a version line is the smuggled edit this exists
-    to catch. Version lines are allowed through and ignored here, because
-    `check_pin_move` judges them with the bump rules instead.
+    to catch. Version lines are returned separately rather than ignored --
+    `repin` bumps the version alongside the pins, and letting that ride
+    through unchecked would accept any version change at all so long as a
+    pin moved in the same diff.
     """
     lines: list[PinLine] = []
+    removed_versions: list[str] = []
+    added_versions: list[str] = []
     problems: list[Problem] = []
 
     def bad(code: str, detail: str) -> None:
@@ -347,7 +355,7 @@ def scan_pin_patch(filename: str, patch: str | None) -> tuple[list[PinLine], lis
             "GitHub rendered no patch for this file (binary, or too large to diff); "
             "an unreadable change is a rejection, not an assumption",
         )
-        return lines, problems
+        return lines, removed_versions, added_versions, problems
 
     in_hunk = False
     for raw in patch.split("\n"):
@@ -366,14 +374,15 @@ def scan_pin_patch(filename: str, patch: str | None) -> tuple[list[PinLine], lis
             bad("malformed-patch", f"line is neither context, addition nor removal: {line!r}")
             continue
         body = line[1:]
-        if VERSION_LINE_RE.match(body):
-            continue  # a bump riding along; check_pin_move judges it separately
+        if v := VERSION_LINE_RE.match(body):
+            (added_versions if line[0] == "+" else removed_versions).append(v.group("version"))
+            continue
         m = PIN_LINE_RE.match(body)
         if not m:
             bad("non-pin-line", f"changed line is neither a pin nor a version line: {line!r}")
             continue
         lines.append(PinLine(m.group("pkg"), m.group("rev"), line[0] == "+"))
-    return lines, problems
+    return lines, removed_versions, added_versions, problems
 
 
 def check_pin_move(files: list[ChangedFile], published_revs) -> PinVerdict:
@@ -396,14 +405,18 @@ def check_pin_move(files: list[ChangedFile], published_revs) -> PinVerdict:
 
     removed: dict[str, set[str]] = {}
     added: dict[str, set[str]] = {}
+    old_versions: set[str] = set()
+    new_versions: set[str] = set()
     for f in files:
         if f.filename not in VERSION_FILES:
             verdict.problems.append(
                 Problem("foreign-file", f"{f.filename}: not a manifest a pin move may touch")
             )
             continue
-        lines, problems = scan_pin_patch(f.filename, f.patch)
+        lines, olds, news, problems = scan_pin_patch(f.filename, f.patch)
         verdict.problems.extend(problems)
+        old_versions.update(olds)
+        new_versions.update(news)
         if lines:
             verdict.lines[f.filename] = len(lines)
         for pin in lines:
@@ -411,6 +424,29 @@ def check_pin_move(files: list[ChangedFile], published_revs) -> PinVerdict:
 
     if verdict.problems:
         return verdict
+
+    # `repin` bumps the version when a packaged pin moves, so a version
+    # change here is expected -- but it is held to the same rule a release
+    # PR is held to, or a pin move becomes a way to smuggle any version at
+    # all past the validator.
+    if old_versions or new_versions:
+        if len(old_versions) != 1 or len(new_versions) != 1:
+            verdict.problems.append(
+                Problem(
+                    "ambiguous-version",
+                    f"{len(old_versions)} old and {len(new_versions)} new version(s) across "
+                    f"the diff; a bump is one version to one other",
+                )
+            )
+        else:
+            old, new = old_versions.pop(), new_versions.pop()
+            kind = bump_kind(old, new)
+            if kind is None:
+                verdict.problems.append(
+                    Problem("not-a-bump", f"{old} -> {new} is not a forward bump of one part")
+                )
+            else:
+                verdict.bump = (old, new, kind)
 
     for pkg in sorted(set(removed) | set(added)):
         olds, news = removed.get(pkg, set()), added.get(pkg, set())
