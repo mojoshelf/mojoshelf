@@ -40,7 +40,7 @@ def plan_for(repos, findings, args=ARGS):
 
 
 def commands(plan) -> list[str]:
-    return [c for step in plan.steps for c in step.commands]
+    return [c.text for step in plan.steps for c in step.commands]
 
 
 class TestOrdering(unittest.TestCase):
@@ -125,6 +125,42 @@ class TestTheHeldPublish(unittest.TestCase):
         cmds = commands(plan_for(repos, findings))
         self.assertNotIn("tins --repo r.mojo publish --yes", cmds[:3])
         self.assertIn("--repo r.mojo", [c for c in cmds if "repin" in c.split()][0])
+
+
+class TestTheHoldSurvivesTheReleaseLanding(unittest.TestCase):
+    """The same situation one step later.
+
+    Once the dependency's release PR is merged it stops being
+    `stale-release` and becomes `unpublished` like its consumer. The
+    consumer's pin is no less about to go stale, so the hold has to key on
+    "is about to publish a new version", not on one particular finding.
+    """
+
+    def test_a_consumer_is_held_when_its_dependency_is_merely_unpublished(self):
+        repos = [
+            FakeRepo("magmalake", "parquet.mojo", "parquet-mojo"),
+            FakeRepo("magmalake", "iceberg.mojo", "iceberg-mojo", [FakeDep("parquet-mojo")]),
+        ]
+        findings = [
+            Finding("magmalake/parquet.mojo", WARN, "unpublished", ""),
+            Finding("magmalake/iceberg.mojo", WARN, "unpublished", ""),
+        ]
+        cmds = commands(plan_for(repos, findings))
+        self.assertEqual(cmds[0], "tins --repo parquet.mojo publish --yes")
+        self.assertLess(
+            cmds.index("tins --repo iceberg.mojo repin"),
+            cmds.index("tins --repo iceberg.mojo publish --yes"),
+        )
+
+    def test_a_dependency_is_not_held_by_its_own_consumer(self):
+        """The negative control for the widened trigger: now that every
+        unpublished tin seeds the hold, the seed must not hold itself."""
+        repos = [
+            FakeRepo("magmalake", "parquet.mojo", "parquet-mojo"),
+            FakeRepo("magmalake", "iceberg.mojo", "iceberg-mojo", [FakeDep("parquet-mojo")]),
+        ]
+        findings = [Finding("magmalake/parquet.mojo", WARN, "unpublished", "")]
+        self.assertEqual(commands(plan_for(repos, findings)), ["tins --repo parquet.mojo publish --yes"])
 
 
 class TestWhatCanBePublished(unittest.TestCase):

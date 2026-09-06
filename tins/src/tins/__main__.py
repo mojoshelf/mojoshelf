@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from . import commands
+from . import commands, run
 from .config import Config
 from .gitutil import CommandError
 from .registry import RegistryError
@@ -119,11 +119,26 @@ def build_parser() -> argparse.ArgumentParser:
     repin.add_argument("--dry-run", action="store_true")
     repin.set_defaults(fn=commands.cmd_repin)
 
+    guided = sub.add_parser(
+        "run",
+        help="walk doctor's plan one step at a time, approving each from the terminal",
+    )
+    guided.set_defaults(fn=run.cmd_run)
+
+    p.tins_subcommands = frozenset(sub.choices)
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    # Bare `tins` used to print usage. The guided run is the better answer
+    # to "what now?", and it asks before doing anything. Detecting the
+    # missing subcommand has to happen before parsing, because argparse
+    # exits on a required subcommand rather than handing back a Namespace.
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if not any(a in parser.tins_subcommands for a in argv):
+        argv.append("run")
+    args = parser.parse_args(argv)
     if getattr(args, "command", None) and args.command and args.command[0] == "--":
         args.command = args.command[1:]
     config = Config.load(args.config)
