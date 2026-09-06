@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import os
 import shutil
+import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import gitutil, manifest, remedy, versionpatch
 from .config import Config
 from .registry import Registry, RegistryError
-from .workspace import GitDep, Repo, discover, select, topo_order
+from .workspace import GitDep, Repo, discover, read_at_ref, select, topo_order
 
 ERROR, WARN, INFO = "error", "warn", "info"
 
@@ -127,6 +128,52 @@ def _changed_paths(repo: Repo, old: str, new: str) -> list[str]:
         ["git", "diff", "--name-only", f"{old}..{new}"], cwd=repo.path, check=False
     )
     return out.splitlines() if code == 0 and out else []
+
+
+def _packaged_dependencies(text: str | None) -> dict | None:
+    """The dependency tables a consumer actually resolves, from a pixi.toml.
+
+    Only `package.*dependencies` count. The workspace's own `[dependencies]`
+    and its features are the development environment -- a benchmark tool or
+    a linter added there changes nothing a consumer installs, and treating
+    that as a release owed would cry wolf on every repo.
+
+    None means the file could not be read or parsed, which the caller has
+    to treat as "cannot say" rather than "no change".
+    """
+    if text is None:
+        return None
+    try:
+        pixi = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        return None
+    return {
+        name: table
+        for name, table in (pixi.get("package") or {}).items()
+        if name.endswith("dependencies") and isinstance(table, dict)
+    }
+
+
+def _packaged_changes(repo: Repo, old: str, new: str, changed: list[str]) -> list[str]:
+    """The changed paths that alter what a consumer installs.
+
+    `src/` is the obvious half. The other half is a dependency pin: it lives
+    in pixi.toml, not under src/, and moving one changes what every consumer
+    resolves just as surely as editing the code. Reading the manifest at
+    both revisions rather than trusting the filename keeps a task edit, a
+    lint setting or the version bump itself from counting.
+    """
+    packaged = [p for p in changed if p.startswith("src/")]
+    if "pixi.toml" not in changed:
+        return packaged
+    before = _packaged_dependencies(read_at_ref(repo.path, "pixi.toml", old))
+    after = _packaged_dependencies(read_at_ref(repo.path, "pixi.toml", new))
+    if before is None or after is None:
+        return packaged  # cannot say; do not invent a release
+    if before != after:
+        packaged.append("pixi.toml (packaged dependencies)")
+    return packaged
+
 
 
 def _print_findings(findings: list[Finding], verbose: bool = False) -> None:
@@ -267,7 +314,7 @@ def diagnose(config: Config, args) -> tuple[list[Repo], list[Finding]]:
                 # installs, and calling that an error would cry wolf on every
                 # repo. Only a change under src/ is a release that is owed.
                 changed = _changed_paths(r, rel.sha, r.ref)
-                packaged = [p for p in changed if p.startswith("src/")]
+                packaged = _packaged_changes(r, rel.sha, r.ref, changed)
                 if packaged:
                     findings.append(
                         Finding(
@@ -275,7 +322,9 @@ def diagnose(config: Config, args) -> tuple[list[Repo], list[Finding]]:
                             ERROR,
                             "stale-release",
                             f"{r.version} is published at {rel.sha[:12]} but main is at "
-                            f"{r.ref[:12]} with {len(packaged)} changed file(s) under src/: "
+                            f"{r.ref[:12]} with {len(packaged)} change(s) a consumer would "
+                            f"install ({', '.join(packaged[:3])}"
+                            f"{', …' if len(packaged) > 3 else ''}): "
                             f"the merged work reaches nobody until the version is bumped "
                             f"and published",
                         )
@@ -287,7 +336,7 @@ def diagnose(config: Config, args) -> tuple[list[Repo], list[Finding]]:
                             INFO,
                             "unreleased-commits",
                             f"main is {r.ref[:12]}, past {r.version}'s {rel.sha[:12]}, but "
-                            f"nothing under src/ changed — no release owed",
+                            f"nothing a consumer installs changed — no release owed",
                         )
                     )
 
