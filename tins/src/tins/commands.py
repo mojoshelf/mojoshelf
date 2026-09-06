@@ -195,7 +195,14 @@ def cmd_graph(args, config: Config) -> int:
 # ---------------------------------------------------------------- doctor
 
 
-def cmd_doctor(args, config: Config) -> int:
+def diagnose(config: Config, args) -> tuple[list[Repo], list[Finding]]:
+    """Every repo in scope and everything wrong with it.
+
+    Split out of `cmd_doctor` so the guided run can re-diagnose between
+    steps without re-printing a report: each step changes the answer, and a
+    plan built once at the start would describe a workspace that has since
+    moved.
+    """
     registry = Registry(config.registry)
     repos = select(discover(config, fetch=not args.no_fetch), args.org, args.repo, args.tins)
     findings: list[Finding] = []
@@ -317,6 +324,11 @@ def cmd_doctor(args, config: Config) -> int:
                 )
             )
 
+    return repos, findings
+
+
+def cmd_doctor(args, config: Config) -> int:
+    repos, findings = diagnose(config, args)
     errors = sum(1 for f in findings if f.level == ERROR)
     warns = sum(1 for f in findings if f.level == WARN)
     source = "working tree" if args.no_fetch else "origin/main"

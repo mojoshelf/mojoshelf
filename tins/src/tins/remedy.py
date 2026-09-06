@@ -37,10 +37,30 @@ _CONFIRM = {"fix": "--yes", "release": "--yes", "merge": "--yes", "publish": "--
 
 
 @dataclass
+class Command:
+    """A command in the plan, in the form that both prints and runs.
+
+    `text` is what the reader sees and `argv` is what `tins run` executes,
+    built from the same fields so the two cannot drift. A guided run that
+    quietly does something other than what it displayed would be worse than
+    no guidance at all.
+    """
+
+    sub: str
+    slugs: list[str]
+    text: str
+    argv: list[str]
+
+    @property
+    def opens_prs(self) -> bool:
+        return self.sub in ("fix", "release", "repin")
+
+
+@dataclass
 class Step:
     """One line of the plan: a command, why it is there, and its position."""
 
-    commands: list[str]
+    commands: list[Command]
     why: str
 
 
@@ -111,10 +131,13 @@ def build(repos, findings, args) -> Plan:
 
     plan = Plan()
 
-    def cmd(sub: str, slugs: list[str], *extra: str) -> str:
+    def cmd(sub: str, slugs: list[str], *extra: str) -> Command:
         """`tins <scope> <subcommand> <flags>` -- scope first, always."""
-        parts = ["tins", _scope(slugs, by_slug, args), sub, *extra, _CONFIRM[sub]]
-        return " ".join(x for x in parts if x)
+        scope = _scope(slugs, by_slug, args)
+        argv = [*scope.split(), sub, *extra]
+        if confirm := _CONFIRM[sub]:
+            argv.append(confirm)
+        return Command(sub, list(slugs), " ".join(["tins", *argv]), argv)
 
     # 1. Versions that disagree with themselves, first. A release bumps from
     #    the version it reads, so bumping a repo whose files disagree just
@@ -150,8 +173,14 @@ def build(repos, findings, args) -> Plan:
     #    which consumes something in step 2, should not publish yet: its pin is
     #    about to go stale, and the re-pin would then owe it a second release.
     #    Held here, the pin move folds into the release it has not made yet.
-    downstream = _consumers(repos, stale_tins) if stale_tins else set()
     unpub = kinds.get("unpublished", [])
+    # Anything about to reach the registry with a new version invalidates
+    # its consumers' pins -- whether it owes a release (step 2) or is
+    # already bumped and merely unpublished. The second case is the same
+    # situation one step later, and missing it costs the same extra
+    # release: the consumer publishes, then has to re-pin and publish again.
+    publishing = stale_tins | {by_slug[s].tin for s in unpub if by_slug[s].tin}
+    downstream = _consumers(repos, publishing) if publishing else set()
     held = [s for s in unpub if s in downstream]
     publish_now = [s for s in unpub if s not in downstream]
 
@@ -164,7 +193,7 @@ def build(repos, findings, args) -> Plan:
         )
 
     # 4. Pins that need moving — the stale ones doctor found, plus anything
-    #    held back in step 3, whose pin step 2 has just invalidated.
+    #    held back above, whose pin the release step has just invalidated.
     pins = kinds.get("unpublished-pin", []) + kinds.get("outdated-pin", [])
     repin = sorted(set(pins) | set(held))
     if repin:
@@ -177,8 +206,8 @@ def build(repos, findings, args) -> Plan:
         if held:
             names = ", ".join(sorted(by_slug[s].name for s in held))
             parts.append(
-                f"{names} goes stale the moment step 2 publishes, and is held until now on "
-                f"purpose — its own unpublished version absorbs the pin move, which saves it "
+                f"{names} goes stale the moment the step above publishes, and is held until now "
+                f"on purpose — its own unpublished version absorbs the pin move, which saves it "
                 f"a second release"
             )
         why = "; ".join(parts)
@@ -211,8 +240,8 @@ def render(plan: Plan) -> None:
         return
     print("\nnext steps")
     for i, step in enumerate(plan.steps, 1):
-        for j, cmd in enumerate(step.commands):
-            print(f"  {str(i) + '.' if j == 0 else '  '} {cmd}")
+        for j, c in enumerate(step.commands):
+            print(f"  {str(i) + '.' if j == 0 else '  '} {c.text}")
         print(f"     {step.why}")
     for note in plan.notes:
         print(f"  · {note}")

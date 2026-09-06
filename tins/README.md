@@ -96,6 +96,28 @@ The tins in publish order — each one after everything it pins.
 17. iceberg-mojo  <- avro-mojo, hashes-mojo, ..., parquet-mojo
 ```
 
+### `tins run`
+
+The guided version of everything below. Bare `tins` does the same thing.
+
+```sh
+tins            # or: tins run
+```
+
+It walks `doctor`'s plan a step at a time: why the step exists, the command
+it will run, then a prompt. After a command that opens pull requests it
+prints their diffs inline — the same file patches `tins merge` judges on, so
+what you approve is what the validator saw — and asks again before merging.
+
+Two things it guarantees. **Nothing runs without a keystroke**: every command
+is its own prompt, and a non-terminal gets a refusal rather than a default of
+yes. **What runs is what was printed**: each command is re-parsed from its own
+displayed text through the real argument parser, so a step cannot execute
+something other than what you read.
+
+The plan is rebuilt after every step, which is the point rather than caution
+— each step changes what the next one should be.
+
 ### `tins doctor`
 
 Checks every repo against the registry and exits non-zero on an error.
@@ -141,7 +163,7 @@ next steps
      1 repo(s) with merged src/ changes that reach nobody until a bump is published
   3. tins --repo iceberg.mojo repin
      ...
-     iceberg.mojo goes stale the moment step 2 publishes, and is held until now on
+     iceberg.mojo goes stale the moment the step above publishes, and is held until now on
      purpose — its own unpublished version absorbs the pin move, which saves it a
      second release
 ```
