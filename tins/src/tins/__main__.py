@@ -32,6 +32,11 @@ def build_parser() -> argparse.ArgumentParser:
     graph.set_defaults(fn=commands.cmd_graph)
 
     doctor = sub.add_parser("doctor", help="check versions, pins and registry state")
+    doctor.add_argument(
+        "--no-next",
+        action="store_true",
+        help="report the findings without suggesting the commands that clear them",
+    )
     doctor.set_defaults(fn=commands.cmd_doctor)
 
     sweep = sub.add_parser(

@@ -128,6 +128,34 @@ reported as `unreleased-commits` instead.
 the answer describes what a consumer would install rather than what happens
 to be checked out. `--no-fetch` reads the working tree instead.
 
+It ends with the commands that clear what it found, in the order they have to
+be worked:
+
+```
+next steps
+  1. tins fix --repo docx.mojo --repo pdftotext.mojo --yes
+     2 repo(s) whose version files disagree — do this first, so anything that bumps a version starts from the right one
+  2. tins release --repo parquet.mojo --bump minor --yes
+     tins merge --repo parquet.mojo --yes
+     tins publish --repo parquet.mojo --yes
+     1 repo(s) with merged src/ changes that reach nobody until a bump is published
+  3. tins repin --repo iceberg.mojo --yes
+     ...
+     iceberg.mojo goes stale the moment step 2 publishes, and is held until now on
+     purpose — its own unpublished version absorbs the pin move, which saves it a
+     second release
+```
+
+The order is the point. Publishing a consumer before its dependency releases
+costs that consumer a second release: it publishes what it has, then has to
+re-pin and publish again. So a consumer sitting on an unpublished bump is
+held until the dependency lands, and the pin move folds into the release it
+has not made yet.
+
+The plan only addresses findings you were shown — `-v` widens both. Findings
+with no command behind them say so rather than going quiet. `--no-next`
+prints the findings alone.
+
 ### `tins sweep`
 
 Runs a command in a worktree of every selected repo and, wherever the tree

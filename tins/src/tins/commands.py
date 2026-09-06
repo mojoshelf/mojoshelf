@@ -7,7 +7,7 @@ import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import gitutil, manifest, versionpatch
+from . import gitutil, manifest, remedy, versionpatch
 from .config import Config
 from .registry import Registry
 from .workspace import GitDep, Repo, discover, select, topo_order
@@ -325,6 +325,9 @@ def cmd_doctor(args, config: Config) -> int:
         return 0
     _print_findings(findings, args.verbose)
     print(f"\n{len(repos)} repos checked against {source}: {errors} errors, {warns} warnings")
+    if not args.no_next:
+        shown = [f for f in findings if args.verbose or f.level != INFO]
+        remedy.render(remedy.build(repos, shown, args))
     return 1 if errors else 0
 
 
