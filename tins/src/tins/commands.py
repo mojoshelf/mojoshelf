@@ -922,3 +922,83 @@ def cmd_merge(args, config: Config) -> int:
     if not failed:
         print("\nnow `tins publish --yes`")
     return 1 if failed or unreadable else 0
+
+
+# ------------------------------------------------------------------- fix
+
+
+def cmd_fix(args, config: Config) -> int:
+    """Normalise a version that disagrees across the files carrying it.
+
+    The version lives in `pixi.toml` twice and `shelf.toml` once, and they
+    drift — usually `[workspace]` left behind when the other two were bumped.
+    `shelf.toml` is authoritative because `shelf publish` reads it; a repo
+    without one falls back to `[package]`, which is what a consumer resolves.
+    """
+    repos = select(discover(config, fetch=True), args.org, args.repo, args.tins)
+    plan: list[tuple[Repo, str, dict[str, str]]] = []
+
+    for r in sorted(repos, key=lambda r: (r.org, r.name)):
+        present = {k: v for k, v in r.version_files.items() if v is not None}
+        if len(set(present.values())) <= 1:
+            continue
+        target = r.shelf_version or r.package_version
+        if not target:
+            print(f"skip  {r.slug}: no shelf.toml or [package] version to trust")
+            continue
+        wrong = {k: v for k, v in present.items() if v != target}
+        plan.append((r, target, wrong))
+
+    if not plan:
+        print("no version disagreements")
+        return 0
+
+    print("will normalise:")
+    for r, target, wrong in plan:
+        detail = ", ".join(f"{k}={v}" for k, v in wrong.items())
+        print(f"  {r.slug}  {detail}  ->  {target}")
+    if not args.yes:
+        print("\nre-run with --yes to open the PRs")
+        return 0
+
+    results: list[tuple[str, str]] = []
+    for r, target, wrong in plan:
+        print(f"\n=== {r.slug}")
+        branch = args.branch or "version-sync"
+        wt = _worktree_on_branch(r, branch, r.ref or gitutil.fetch_main(r.path, r.org, r.name))
+
+        touched = 0
+        for name in ("pixi.toml", "shelf.toml"):
+            f = wt / name
+            if not f.is_file():
+                continue
+            text = f.read_text()
+            for stale in {v for v in wrong.values()}:
+                text, n = manifest.set_version(text, stale, target)
+                touched += n
+            f.write_text(text)
+        if touched == 0:
+            print("  ! nothing rewritten — leaving it")
+            results.append((r.slug, "nothing rewritten"))
+            continue
+        print(f"  {touched} line(s) -> {target}")
+
+        title = args.title or f"Say {target} in every file that carries the version"
+        body = (
+            f"The version is written in more than one place and they disagreed:\n\n"
+            + "\n".join(f"- `{k}` said `{v}`" for k, v in wrong.items())
+            + f"\n\nAll of them now say `{target}`, which is what "
+            + ("`shelf.toml` had" if r.shelf_version else "`[package]` had")
+            + " — the one `shelf publish` reads, and the one a consumer resolves.\n"
+        )
+        message = gitutil.commit_message(title, body, config.co_authored_by)
+        commit = gitutil.commit(wt, message, config.author_name, config.author_email)
+        gitutil.push(wt, r.org, r.name, branch)
+        url = gitutil.create_pr(r.org, r.name, branch, title, body) if args.pr else ""
+        print(f"  {commit[:8]} pushed{'  ' + url if url else ''}")
+        results.append((r.slug, url or commit[:8]))
+
+    print("\n--- summary")
+    for slug, outcome in results:
+        print(f"{slug}: {outcome}")
+    return 0

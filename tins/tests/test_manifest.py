@@ -108,3 +108,29 @@ class TestCollectDeps(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestVersionNormalisation(unittest.TestCase):
+    """`tins fix` rewrites the stale copies, and only those."""
+
+    PIXI = (
+        '[workspace]\nname = "x"\nversion = "0.1.0"\n\n'
+        '[package]\nname = "x-mojo"\nversion = "0.1.3"\n\n'
+        '[package.host-dependencies]\nmojo-compiler = "==1.0.0"\n'
+    )
+
+    def test_the_stale_copy_is_rewritten_to_the_target(self):
+        out, n = manifest.set_version(self.PIXI, "0.1.0", "0.1.3")
+        self.assertEqual(n, 1, "only the stale [workspace] line moves")
+        self.assertEqual(out.count('version = "0.1.3"'), 2)
+        self.assertNotIn('version = "0.1.0"', out)
+
+    def test_a_dependency_pin_that_looks_like_a_version_is_untouched(self):
+        pixi = self.PIXI.replace('mojo-compiler = "==1.0.0"', 'mojo-compiler = "==0.1.0"')
+        out, n = manifest.set_version(pixi, "0.1.0", "0.1.3")
+        self.assertEqual(n, 1)
+        self.assertIn('mojo-compiler = "==0.1.0"', out)
+
+    def test_an_agreeing_file_is_left_alone(self):
+        out, n = manifest.set_version(self.PIXI, "0.9.9", "0.1.3")
+        self.assertEqual((out, n), (self.PIXI, 0))
