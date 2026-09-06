@@ -54,6 +54,15 @@ def build_parser() -> argparse.ArgumentParser:
     publish.add_argument("--force", action="store_true", help="publish even with stale package pins")
     publish.set_defaults(fn=commands.cmd_publish)
 
+    fix = sub.add_parser(
+        "fix", help="normalise a version that disagrees across pixi.toml and shelf.toml"
+    )
+    fix.add_argument("--yes", action="store_true", help="actually open the PRs (default is a plan)")
+    fix.add_argument("--branch", default="version-sync", help="branch name (default: version-sync)")
+    fix.add_argument("--title", help="commit subject and PR title")
+    fix.add_argument("--no-pr", dest="pr", action="store_false", help="push without opening a PR")
+    fix.set_defaults(fn=commands.cmd_fix)
+
     release = sub.add_parser(
         "release", help="open a version-bump PR for every tin whose published rev is behind main"
     )

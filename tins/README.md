@@ -148,6 +148,22 @@ lock` before committing; `--no-pr` pushes without opening one.
 Only tracked files are committed, so build logs left in a worktree do not
 end up in the PR.
 
+### `tins fix`
+
+Normalises a version that disagrees across the files carrying it. The version
+lives in `pixi.toml` twice and `shelf.toml` once, and they drift — usually
+`[workspace]` left behind when the other two were bumped.
+
+```sh
+tins fix --org magmalake          # print the plan
+tins fix --org magmalake --yes    # open the PRs
+```
+
+`shelf.toml` is treated as authoritative because `shelf publish` reads it; a
+repo without one falls back to `[package]`, which is what a consumer resolves.
+A dependency pin that happens to look like a version is not touched — only
+bare `version = "..."` lines are.
+
 ### `tins release`
 
 Opens a version-bump PR for every tin whose published revision is behind
