@@ -27,26 +27,91 @@ class Finding:
 # ---------------------------------------------------------------- helpers
 
 
+# A branch recreated because its base had moved, and the remote tip we saw
+# when we recreated it. The push that follows has to overwrite that tip, and
+# `--force-with-lease` against exactly this value is what keeps "overwrite
+# the stale branch we made" from becoming "overwrite whatever is there now".
+_LEASES: dict[tuple[str, str], str] = {}
+
+
+def _branch_tip(repo: Repo, branch: str) -> str | None:
+    out, _, code = gitutil.run(
+        ["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"],
+        cwd=repo.path,
+        check=False,
+    )
+    return out.strip() if code == 0 and out.strip() else None
+
+
+def _remote_tip(repo: Repo, branch: str) -> str | None:
+    out, _, code = gitutil.run(
+        ["git", "ls-remote", gitutil.https_url(repo.org, repo.name), f"refs/heads/{branch}"],
+        cwd=repo.path,
+        check=False,
+    )
+    return out.split()[0] if code == 0 and out.strip() else None
+
+
 def _worktree_on_branch(repo: Repo, branch: str, sha: str) -> Path:
-    """A worktree of `repo` on `branch`, created from `sha` if it is new.
+    """A worktree of `repo` on `branch`, based on `sha`.
 
     The shared checkout is never touched: it holds whatever the user was
     doing, and a stray checkout or reset there is not recoverable from
     here.
+
+    `based on sha` is the whole contract, and it used to hold only for a
+    branch that did not exist yet. These branches have fixed names --
+    `repin`, `version-sync` -- so a second run weeks later found the branch
+    from the first and built on a base that had moved, which produced a
+    conflicting pull request nothing here could clear.
+
+    A stale branch is therefore reset onto `sha`, with its old tip kept at
+    `refs/tins/stale/<branch>/<short sha>` so a run can never destroy a
+    commit outright. Uncommitted edits in that worktree do not survive; they
+    are this tool's own output, rewritten from the manifests every run.
     """
     wt = repo.worktree_path(branch)
-    if wt.exists():
-        return wt
-    exists = gitutil.run(
-        ["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"],
-        cwd=repo.path,
-        check=False,
-    )[2] == 0
-    if exists:
-        gitutil.git(repo.path, "worktree", "add", "--quiet", str(wt), branch)
-    else:
+    tip = _branch_tip(repo, branch)
+
+    if tip is None:
+        if wt.exists():  # a worktree whose branch is gone: nothing to preserve
+            gitutil.run(["git", "worktree", "remove", "--force", str(wt)], cwd=repo.path, check=False)
         gitutil.add_worktree(repo.path, wt, sha, branch=branch)
+        return wt
+
+    based_on_sha = (
+        gitutil.run(
+            ["git", "merge-base", "--is-ancestor", sha, tip], cwd=repo.path, check=False
+        )[2]
+        == 0
+    )
+    if based_on_sha:
+        if not wt.exists():
+            gitutil.git(repo.path, "worktree", "add", "--quiet", str(wt), branch)
+        return wt
+
+    gitutil.git(repo.path, "update-ref", f"refs/tins/stale/{branch}/{tip[:8]}", tip)
+    print(f"  {branch} was based on an older main; old tip kept at refs/tins/stale/{branch}/{tip[:8]}")
+    if remote := _remote_tip(repo, branch):
+        _LEASES[(str(repo.path), branch)] = remote
+    if wt.exists():
+        gitutil.git(wt, "reset", "--hard", "--quiet", sha)
+    else:
+        gitutil.git(repo.path, "branch", "--force", branch, sha)
+        gitutil.git(repo.path, "worktree", "add", "--quiet", str(wt), branch)
     return wt
+
+
+def _push(wt: Path, repo: Repo, branch: str) -> None:
+    """Push `branch`, overwriting a stale remote only if it has not moved.
+
+    A branch this run had to reset cannot fast-forward onto the remote it
+    left behind, so the push needs a lease. Without one the push is rejected
+    and the pull request keeps showing the older commit -- which is how a PR
+    came to display less than the branch it was opened from.
+    """
+    lease = _LEASES.pop((str(repo.path), branch), None)
+    gitutil.push(wt, repo.org, repo.name, branch, force_with_lease=lease)
 
 
 def _lock(config: Config, path: Path) -> None:
@@ -448,7 +513,7 @@ def cmd_sweep(args, config: Config) -> int:
             _lock(config, wt)
         message = gitutil.commit_message(args.title, body, config.co_authored_by)
         commit = gitutil.commit(wt, message, config.author_name, config.author_email)
-        gitutil.push(wt, r.org, r.name, args.branch)
+        _push(wt, r, args.branch)
         url = gitutil.create_pr(r.org, r.name, args.branch, args.title, body) if args.pr else ""
         print(f"  {commit[:8]} pushed{'  ' + url if url else ''}")
         results.append((r.slug, url or commit[:8]))
@@ -591,7 +656,7 @@ def cmd_repin(args, config: Config) -> int:
         )
         message = gitutil.commit_message(title, body, config.co_authored_by)
         commit = gitutil.commit(wt, message, config.author_name, config.author_email)
-        gitutil.push(wt, r.org, r.name, args.branch)
+        _push(wt, r, args.branch)
         url = gitutil.create_pr(r.org, r.name, args.branch, title, body) if args.pr else ""
         print(f"  {commit[:8]} pushed{'  ' + url if url else ''}")
         results.append((r.slug, url or commit[:8]))
@@ -695,7 +760,7 @@ def cmd_release(args, config: Config) -> int:
         title = args.title or f"Release {new}"
         message = gitutil.commit_message(title, body, config.co_authored_by)
         commit = gitutil.commit(wt, message, config.author_name, config.author_email)
-        gitutil.push(wt, r.org, r.name, branch)
+        _push(wt, r, branch)
         url = gitutil.create_pr(r.org, r.name, branch, title, body) if args.pr else ""
         print(f"  {commit[:8]} pushed{'  ' + url if url else ''}")
         results.append((r.slug, url or commit[:8]))
@@ -1113,7 +1178,7 @@ def cmd_fix(args, config: Config) -> int:
         )
         message = gitutil.commit_message(title, body, config.co_authored_by)
         commit = gitutil.commit(wt, message, config.author_name, config.author_email)
-        gitutil.push(wt, r.org, r.name, branch)
+        _push(wt, r, branch)
         url = gitutil.create_pr(r.org, r.name, branch, title, body) if args.pr else ""
         print(f"  {commit[:8]} pushed{'  ' + url if url else ''}")
         results.append((r.slug, url or commit[:8]))
