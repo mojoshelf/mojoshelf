@@ -29,6 +29,12 @@ NO_COMMAND = {
 # Findings that are already someone else's step, or are purely informational.
 _SUBSUMED = {"unreleased-commits", "unregistered-dep"}
 
+# How each subcommand is told to act. Most default to printing a plan and
+# need `--yes`; `repin` acts by default and takes `--dry-run` instead. The
+# round-trip test in tests/test_remedy.py is what keeps this honest -- a
+# printed command that the CLI rejects is worse than no suggestion.
+_CONFIRM = {"fix": "--yes", "release": "--yes", "merge": "--yes", "publish": "--yes", "repin": ""}
+
 
 @dataclass
 class Step:
@@ -54,6 +60,9 @@ def _scope(slugs: list[str], repos_by_slug: dict, args) -> str:
     it cannot act on a repo the reader did not just read a finding about.
     Past four it stops being readable, and the scope the reader already
     typed is the better handle.
+
+    These are global flags, so they belong before the subcommand -- `tins
+    --repo x release`, not `tins release --repo x`, which argparse rejects.
     """
     if len(slugs) <= 4:
         names = [repos_by_slug[s].name for s in slugs]
@@ -102,8 +111,10 @@ def build(repos, findings, args) -> Plan:
 
     plan = Plan()
 
-    def scope(slugs: list[str]) -> str:
-        return _scope(slugs, by_slug, args)
+    def cmd(sub: str, slugs: list[str], *extra: str) -> str:
+        """`tins <scope> <subcommand> <flags>` -- scope first, always."""
+        parts = ["tins", _scope(slugs, by_slug, args), sub, *extra, _CONFIRM[sub]]
+        return " ".join(x for x in parts if x)
 
     # 1. Versions that disagree with themselves, first. A release bumps from
     #    the version it reads, so bumping a repo whose files disagree just
@@ -111,7 +122,7 @@ def build(repos, findings, args) -> Plan:
     if mismatch := kinds.get("version-mismatch"):
         plan.steps.append(
             Step(
-                [f"tins fix {scope(mismatch)} --yes"],
+                [cmd("fix", mismatch)],
                 f"{len(mismatch)} repo(s) whose version files disagree — do this first, "
                 f"so anything that bumps a version starts from the right one",
             )
@@ -126,9 +137,9 @@ def build(repos, findings, args) -> Plan:
         plan.steps.append(
             Step(
                 [
-                    f"tins release {scope(stale)} --bump minor --yes",
-                    f"tins merge {scope(stale)} --yes",
-                    f"tins publish {scope(stale)} --yes",
+                    cmd("release", stale, "--bump", "minor"),
+                    cmd("merge", stale),
+                    cmd("publish", stale),
                 ],
                 f"{len(stale)} repo(s) with merged src/ changes that reach nobody until "
                 f"a bump is published",
@@ -147,7 +158,7 @@ def build(repos, findings, args) -> Plan:
     if publish_now:
         plan.steps.append(
             Step(
-                [f"tins publish {scope(publish_now)} --yes"],
+                [cmd("publish", publish_now)],
                 f"{len(publish_now)} repo(s) already bumped, not on the registry",
             )
         )
@@ -171,13 +182,13 @@ def build(repos, findings, args) -> Plan:
                 f"a second release"
             )
         why = "; ".join(parts)
-        cmds = [f"tins repin {scope(repin)} --yes", f"tins merge {scope(repin)} --yes"]
+        cmds = [cmd("repin", repin), cmd("merge", repin)]
         # Only a repo that publishes a tin has anything to publish. A
         # consumer that is nobody's dependency -- an app, an example -- takes
         # the pin and stops there, and naming it in a publish would be a
         # command that fails.
         if tins := [s for s in repin if by_slug[s].publishable and by_slug[s].tin]:
-            cmds.append(f"tins publish {scope(tins)} --yes")
+            cmds.append(cmd("publish", tins))
         plan.steps.append(Step(cmds, why))
 
     for code, advice in NO_COMMAND.items():
