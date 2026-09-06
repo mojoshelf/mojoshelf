@@ -9,7 +9,7 @@ from pathlib import Path
 
 from . import gitutil, manifest, remedy, versionpatch
 from .config import Config
-from .registry import Registry
+from .registry import Registry, RegistryError
 from .workspace import GitDep, Repo, discover, select, topo_order
 
 ERROR, WARN, INFO = "error", "warn", "info"
@@ -750,6 +750,87 @@ def _check_state(rollup: list[dict] | None) -> tuple[str, str]:
     return "green", f"{good} of {total} passed"
 
 
+def _note_checks(v: Verdict, pr: dict, note, args) -> None:
+    """CI, draft state and mergeability — the same for any machine-written PR."""
+    state, detail = _check_state(pr.get("statusCheckRollup"))
+    if state == "green":
+        note(INFO, "checks", detail)
+    elif state == "none":
+        # An empty rollup is also what a PR looks like in the seconds
+        # between the push and the workflows starting, and merging then
+        # merges an untested tree with a green-looking summary.
+        note(
+            WARN if args.allow_no_checks else ERROR,
+            "no-checks",
+            f"{detail}; either this repo has no CI or the workflows have not started yet"
+            + (" (allowed by --allow-no-checks)" if args.allow_no_checks else ""),
+        )
+    else:
+        note(ERROR, f"checks-{state}", detail)
+
+    if pr.get("isDraft"):
+        note(ERROR, "draft", "the pull request is a draft; a draft is never merged")
+    mergeable = pr.get("mergeable")
+    blocked = UNMERGEABLE_STATES.get(pr.get("mergeStateStatus") or "UNKNOWN")
+    if mergeable != "MERGEABLE":
+        note(
+            ERROR,
+            "not-mergeable",
+            f"GitHub reports mergeable={mergeable}"
+            + (
+                "; it has not finished computing this yet, so try again in a moment"
+                if mergeable == "UNKNOWN"
+                else ""
+            ),
+        )
+    elif blocked:
+        note(ERROR, "not-mergeable", blocked)
+    else:
+        note(INFO, "mergeable", f"mergeable, merge state {pr.get('mergeStateStatus')}")
+
+
+def _moves_pins(changed: list) -> bool:
+    """Whether any changed line is a dependency pin rather than a version."""
+    for f in changed:
+        for line in (f.patch or "").split("\n"):
+            if line[:1] in "+-" and not line.startswith(("+++", "---")):
+                if versionpatch.PIN_LINE_RE.match(line[1:]):
+                    return True
+    return False
+
+
+def _judge_pin_move(v: Verdict, changed: list, registry: Registry, note, pr: dict, args) -> Verdict:
+    """The pin-move counterpart of the version-bump rules.
+
+    The proof is the registry: every revision a pin moves to has to be one
+    the registry published for that tin. That is the same defect
+    `unpublished-pin` catches in `doctor`, caught one step earlier -- before
+    the pin is merged rather than after.
+    """
+
+    def published_revs(pkg: str) -> set[str] | None:
+        try:
+            releases = registry.releases(pkg)
+        except RegistryError:
+            return None
+        return {r.sha for r in releases if r.sha} if releases else None
+
+    verdict = versionpatch.check_pin_move(changed, published_revs)
+    seen: dict[str, int] = {}
+    for p in verdict.problems:
+        seen[p.code] = n = seen.get(p.code, 0) + 1
+        if n <= PROBLEMS_PER_CODE:
+            note(ERROR, p.code, p.message)
+    for code, n in seen.items():
+        if n > PROBLEMS_PER_CODE:
+            note(ERROR, code, f"… and {n - PROBLEMS_PER_CODE} more like that")
+    if not verdict.ok:
+        return v
+    note(INFO, "pin-move", verdict.summary())
+    _note_checks(v, pr, note, args)
+    return v
+
+
 def _judge_pr(repo: Repo, pr: dict, registry: Registry, args) -> Verdict:
     """Every rule, applied to one pull request.
 
@@ -777,12 +858,21 @@ def _judge_pr(repo: Repo, pr: dict, registry: Registry, args) -> Verdict:
     if files is None:
         note(ERROR, "unreadable-diff", "could not read the changed files from GitHub")
         return v
-    bump = versionpatch.check_changed_files(
-        [
-            versionpatch.ChangedFile(f.get("filename", "?"), f.get("status", "?"), f.get("patch"))
-            for f in files
-        ]
-    )
+    changed = [
+        versionpatch.ChangedFile(f.get("filename", "?"), f.get("status", "?"), f.get("patch"))
+        for f in files
+    ]
+
+    # Two shapes of machine-written PR reach here and they are proved
+    # differently. `release` writes version lines, which are checkable
+    # arithmetically. `repin` writes dependency pins, which are only
+    # checkable against the registry -- and judging one by the other's
+    # rules refuses it on every line, which is what used to happen and is
+    # why the plan's repin -> merge -> publish chain could never finish.
+    if _moves_pins(changed):
+        return _judge_pin_move(v, changed, registry, note, pr, args)
+
+    bump = versionpatch.check_changed_files(changed)
     # One repin PR moves the same six pins in three tables, which is
     # thirty-odd identical refusals. Three of each is enough to see what the
     # rule caught; the count says how much more there was.
@@ -832,41 +922,7 @@ def _judge_pr(repo: Repo, pr: dict, registry: Registry, args) -> Verdict:
                 f"repo may simply be bumps ahead of it — worth a look, not a refusal",
             )
 
-    state, detail = _check_state(pr.get("statusCheckRollup"))
-    if state == "green":
-        note(INFO, "checks", detail)
-    elif state == "none":
-        # An empty rollup is also what a PR looks like in the seconds
-        # between the push and the workflows starting, and merging then
-        # merges an untested tree with a green-looking summary.
-        note(
-            WARN if args.allow_no_checks else ERROR,
-            "no-checks",
-            f"{detail}; either this repo has no CI or the workflows have not started yet"
-            + (" (allowed by --allow-no-checks)" if args.allow_no_checks else ""),
-        )
-    else:
-        note(ERROR, f"checks-{state}", detail)
-
-    if pr.get("isDraft"):
-        note(ERROR, "draft", "the pull request is a draft; a draft is never merged")
-    mergeable = pr.get("mergeable")
-    blocked = UNMERGEABLE_STATES.get(pr.get("mergeStateStatus") or "UNKNOWN")
-    if mergeable != "MERGEABLE":
-        note(
-            ERROR,
-            "not-mergeable",
-            f"GitHub reports mergeable={mergeable}"
-            + (
-                "; it has not finished computing this yet, so try again in a moment"
-                if mergeable == "UNKNOWN"
-                else ""
-            ),
-        )
-    elif blocked:
-        note(ERROR, "not-mergeable", blocked)
-    else:
-        note(INFO, "mergeable", f"mergeable, merge state {pr.get('mergeStateStatus')}")
+    _note_checks(v, pr, note, args)
     return v
 
 

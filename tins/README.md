@@ -242,6 +242,14 @@ tins publish --org magmalake --yes    # push the releases to the registry
 
 ### `tins merge`
 
+It judges two shapes of machine-written pull request, because they are
+proved differently. A `release` PR is proved arithmetically: one version,
+moving forward by one part. A `repin` PR is proved against the registry —
+every revision a pin moves to has to be one the registry published for that
+tin, which is the same defect `unpublished-pin` catches in `doctor`, caught
+before the merge instead of after. Anything else in either diff is still a
+refusal.
+
 Merges open pull requests that are **provably nothing but a version bump**,
 and refuses everything else. It is `release`'s counterpart: that command
 opens the PRs, and what is left over is reading each diff to confirm it is
