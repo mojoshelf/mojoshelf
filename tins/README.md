@@ -44,9 +44,18 @@ anywhere, put `bin/tins` on your `PATH`.
 ## Configure
 
 `tins.toml` says where the checkouts are and who commits. It is not in git
-— roots and identity are per-person — so copy `tins.example.toml` first:
+— roots and identity are per-person — so start from the example:
+
+```sh
+cp tins.example.toml tins.toml
+```
+
+Then edit **`tins.toml`**. Nothing below belongs in `pixi.toml`; pixi rejects
+unknown tables, so putting it there breaks every `pixi run` in this directory
+before `tins` is reached.
 
 ```toml
+# tins.toml
 [defaults]
 registry = "https://mojoshelf.org"
 pixi = "0.78.0"
