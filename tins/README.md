@@ -133,13 +133,13 @@ be worked:
 
 ```
 next steps
-  1. tins fix --repo docx.mojo --repo pdftotext.mojo --yes
+  1. tins --repo docx.mojo --repo pdftotext.mojo fix --yes
      2 repo(s) whose version files disagree — do this first, so anything that bumps a version starts from the right one
-  2. tins release --repo parquet.mojo --bump minor --yes
-     tins merge --repo parquet.mojo --yes
-     tins publish --repo parquet.mojo --yes
+  2. tins --repo parquet.mojo release --bump minor --yes
+     tins --repo parquet.mojo merge --yes
+     tins --repo parquet.mojo publish --yes
      1 repo(s) with merged src/ changes that reach nobody until a bump is published
-  3. tins repin --repo iceberg.mojo --yes
+  3. tins --repo iceberg.mojo repin
      ...
      iceberg.mojo goes stale the moment step 2 publishes, and is held until now on
      purpose — its own unpublished version absorbs the pin move, which saves it a
