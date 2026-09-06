@@ -78,6 +78,7 @@ def drive(driver, patches=("cmd_fix", "cmd_release", "cmd_merge", "cmd_publish",
         mock.patch("sys.stdin.isatty", return_value=True),
         mock.patch("tins.run.diagnose", driver.diagnose),
         mock.patch("tins.run._show_diffs"),
+        mock.patch("tins.run._already_open", return_value=[]),
         mock.patch.multiple("tins.commands", **stubs),
     ):
         return run.cmd_run(ARGS, config=None)
@@ -105,6 +106,7 @@ class TestNothingRunsUnapproved(unittest.TestCase):
             with (
                 mock.patch("sys.stdin.isatty", return_value=True),
                 mock.patch("tins.run.diagnose", d.diagnose),
+                mock.patch("tins.run._already_open", return_value=[]),
                 mock.patch.multiple("tins.commands", cmd_fix=d.record("fix")),
             ):
                 self.assertEqual(run.cmd_run(ARGS, config=None), 0)
@@ -129,6 +131,43 @@ class TestWhatRunsIsWhatWasShown(unittest.TestCase):
         self.assertEqual(d.ran[0][1].bump, "minor")
 
 
+class TestTheLoopConverges(unittest.TestCase):
+    """The failure this class exists for: `merge` refused a repin PR, the
+    next diagnosis was identical, and the loop offered `repin` again — which
+    would push the same branch forever."""
+
+    def test_a_step_that_changed_nothing_stops_instead_of_repeating(self):
+        state = (MISMATCH, MISMATCH_FINDING)
+        d = Driver(["y", "y", "y", "y"], [state])  # every diagnosis identical
+        self.assertEqual(drive(d), 1)
+        self.assertEqual(d.subcommands, ["fix"])
+
+    def test_an_already_open_pr_is_not_opened_a_second_time(self):
+        repos = [FakeRepo("magmalake", "parquet.mojo", "parquet-mojo")]
+        findings = [Finding("magmalake/parquet.mojo", ERROR, "stale-release", "")]
+        d = Driver(["y", "y", "y"], [(repos, findings), (repos, [])])
+        stubs = {p: d.record(p.removeprefix("cmd_")) for p in ("cmd_fix", "cmd_merge", "cmd_publish")}
+        with (
+            mock.patch("builtins.input", d.input),
+            mock.patch("sys.stdin.isatty", return_value=True),
+            mock.patch("tins.run.diagnose", d.diagnose),
+            mock.patch("tins.run._show_diffs"),
+            mock.patch("tins.run._already_open", return_value=["magmalake/parquet.mojo#26  bump"]),
+            mock.patch.multiple("tins.commands", **stubs),
+        ):
+            run.cmd_run(ARGS, config=None)
+        self.assertNotIn("release", d.subcommands)
+        self.assertEqual(d.subcommands, ["merge", "publish"])
+
+    def test_an_unlistable_repo_is_treated_as_having_something_open(self):
+        """Wrong in the safe direction: a failed listing must not read as
+        'nothing is open' and license a second push."""
+        with mock.patch("tins.run.gitutil.open_prs", return_value=None):
+            found = run._already_open(["millfolio/docx.mojo"], MISMATCH)
+        self.assertEqual(len(found), 1)
+        self.assertIn("could not list", found[0])
+
+
 class TestThePlanIsRebuiltBetweenSteps(unittest.TestCase):
     def test_the_second_step_comes_from_a_fresh_diagnosis(self):
         """Each step changes what the next one should be. A plan computed
@@ -149,6 +188,7 @@ class TestThePlanIsRebuiltBetweenSteps(unittest.TestCase):
             mock.patch("builtins.input", d.input),
             mock.patch("sys.stdin.isatty", return_value=True),
             mock.patch("tins.run.diagnose", d.diagnose),
+            mock.patch("tins.run._already_open", return_value=[]),
             mock.patch.multiple("tins.commands", cmd_fix=boom, cmd_merge=d.record("merge")),
         ):
             self.assertEqual(run.cmd_run(ARGS, config=None), 3)

@@ -126,7 +126,7 @@ def _collect_deps(pixi: dict) -> list[GitDep]:
     return found
 
 
-def _read(path: Path, filename: str, ref: str | None) -> str | None:
+def read_at_ref(path: Path, filename: str, ref: str | None) -> str | None:
     """A file's content, either from the working tree or from a git ref."""
     if ref is None:
         f = path / filename
@@ -151,7 +151,7 @@ def load_repo(path: Path, ref: str | None = None) -> Repo | None:
     remote = gitutil.remote_of(path)
     if not remote:
         return None
-    pixi_text = _read(path, "pixi.toml", ref)
+    pixi_text = read_at_ref(path, "pixi.toml", ref)
     if pixi_text is None:
         return None
     try:
@@ -159,7 +159,7 @@ def load_repo(path: Path, ref: str | None = None) -> Repo | None:
     except tomllib.TOMLDecodeError:
         return None
     shelf = None
-    if shelf_text := _read(path, "shelf.toml", ref):
+    if shelf_text := read_at_ref(path, "shelf.toml", ref):
         try:
             shelf = tomllib.loads(shelf_text)
         except tomllib.TOMLDecodeError:

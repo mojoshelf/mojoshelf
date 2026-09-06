@@ -39,6 +39,16 @@ VERSION_LINE_RE = re.compile(r'^version[ \t]*=[ \t]*"(?P<version>[^"\n]*)"[ \t]*
 # release PR was written by hand and deserves a look.
 SEMVER_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 
+# A git source dependency pinned at a revision, the only other line a
+# machine-written PR changes. `tins repin` moves exactly these, and the
+# same pin appears once per table it is declared in, so one move is
+# several identical changed lines.
+PIN_LINE_RE = re.compile(
+    r'^[ \t]*(?P<pkg>[A-Za-z0-9._-]+)[ \t]*=[ \t]*\{'
+    r'(?=[^}]*\bgit[ \t]*=[ \t]*"(?P<url>[^"\n]+)")'
+    r'[^}]*\brev[ \t]*=[ \t]*"(?P<rev>[0-9a-f]{7,40})"[^}]*\}[ \t]*\r?$'
+)
+
 HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@")
 
 NO_NEWLINE = "\\ No newline at end of file"
@@ -62,6 +72,44 @@ class ChangedFile:
 class Problem:
     code: str
     message: str
+
+
+@dataclass(frozen=True)
+class PinLine:
+    """One changed dependency-pin line, and which side of the diff it is on."""
+
+    pkg: str
+    rev: str
+    added: bool
+
+
+@dataclass
+class PinVerdict:
+    """What a pin-moving diff turned out to be.
+
+    Separate from `BumpVerdict` because the two are proved differently. A
+    bump is proved arithmetically -- one version, forward, by one part. A
+    pin move can only be proved against the registry: the revision it moves
+    to has to be one the registry published for that tin. Nothing else about
+    a forty-character hex string is checkable.
+    """
+
+    moves: dict[str, tuple[str, str]] = field(default_factory=dict)  # pkg -> (old, new)
+    bump: tuple[str, str, str] | None = None  # (old, new, kind), when one rides along
+    lines: dict[str, int] = field(default_factory=dict)  # file -> pin lines changed
+    problems: list[Problem] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return not self.problems and bool(self.moves)
+
+    def summary(self) -> str:
+        moves = ", ".join(
+            f"{pkg} {old[:12]} -> {new[:12]}" for pkg, (old, new) in sorted(self.moves.items())
+        )
+        files = ", ".join(f"{name} ({n} line(s))" for name, n in sorted(self.lines.items()))
+        bumped = f"; {self.bump[0]} -> {self.bump[1]} ({self.bump[2]})" if self.bump else ""
+        return f"{moves} in {files}{bumped}"
 
 
 @dataclass
@@ -279,3 +327,156 @@ def check_head_versions(texts: dict[str, str | None], new: str) -> list[Problem]
                     )
                 )
     return problems
+
+
+def scan_pin_patch(
+    filename: str, patch: str | None
+) -> tuple[list[PinLine], list[str], list[str], list[Problem]]:
+    """Every changed pin line of one file's patch, or a reason to refuse.
+
+    Same shape and same strictness as `scan_patch`: a changed line that is
+    neither a pin line nor a version line is the smuggled edit this exists
+    to catch. Version lines are returned separately rather than ignored --
+    `repin` bumps the version alongside the pins, and letting that ride
+    through unchecked would accept any version change at all so long as a
+    pin moved in the same diff.
+    """
+    lines: list[PinLine] = []
+    removed_versions: list[str] = []
+    added_versions: list[str] = []
+    problems: list[Problem] = []
+
+    def bad(code: str, detail: str) -> None:
+        problems.append(Problem(code, f"{filename}: {detail}"))
+
+    if patch is None:
+        bad(
+            "unreadable-patch",
+            "GitHub rendered no patch for this file (binary, or too large to diff); "
+            "an unreadable change is a rejection, not an assumption",
+        )
+        return lines, removed_versions, added_versions, problems
+
+    in_hunk = False
+    for raw in patch.split("\n"):
+        line = raw.rstrip("\r")
+        if line.startswith("@@"):
+            if not HUNK_RE.match(line):
+                bad("malformed-patch", f"unrecognised hunk header {line!r}")
+            in_hunk = True
+            continue
+        if not in_hunk:
+            bad("malformed-patch", f"content before the first hunk header: {line!r}")
+            continue
+        if line == "" or line.startswith(" ") or line == NO_NEWLINE:
+            continue
+        if line[0] not in "-+":
+            bad("malformed-patch", f"line is neither context, addition nor removal: {line!r}")
+            continue
+        body = line[1:]
+        if v := VERSION_LINE_RE.match(body):
+            (added_versions if line[0] == "+" else removed_versions).append(v.group("version"))
+            continue
+        m = PIN_LINE_RE.match(body)
+        if not m:
+            bad("non-pin-line", f"changed line is neither a pin nor a version line: {line!r}")
+            continue
+        lines.append(PinLine(m.group("pkg"), m.group("rev"), line[0] == "+"))
+    return lines, removed_versions, added_versions, problems
+
+
+def check_pin_move(files: list[ChangedFile], published_revs) -> PinVerdict:
+    """Judge a pull request that moves dependency pins.
+
+    `published_revs(pkg)` returns the revisions the registry published for
+    that tin, or None if it could not say. None is a refusal rather than an
+    assumption: the whole proof of a pin move is that the registry
+    recognises the revision, so an unanswered registry is no proof at all.
+
+    The rules, in the order a reader would apply them: only manifest files
+    changed; every changed line is a pin line or a version line; each pin
+    moves from exactly one revision to exactly one other; and every
+    destination is a published release of that tin.
+    """
+    verdict = PinVerdict()
+    if not files:
+        verdict.problems.append(Problem("empty-diff", "the pull request changes no files"))
+        return verdict
+
+    removed: dict[str, set[str]] = {}
+    added: dict[str, set[str]] = {}
+    old_versions: set[str] = set()
+    new_versions: set[str] = set()
+    for f in files:
+        if f.filename not in VERSION_FILES:
+            verdict.problems.append(
+                Problem("foreign-file", f"{f.filename}: not a manifest a pin move may touch")
+            )
+            continue
+        lines, olds, news, problems = scan_pin_patch(f.filename, f.patch)
+        verdict.problems.extend(problems)
+        old_versions.update(olds)
+        new_versions.update(news)
+        if lines:
+            verdict.lines[f.filename] = len(lines)
+        for pin in lines:
+            (added if pin.added else removed).setdefault(pin.pkg, set()).add(pin.rev)
+
+    if verdict.problems:
+        return verdict
+
+    # `repin` bumps the version when a packaged pin moves, so a version
+    # change here is expected -- but it is held to the same rule a release
+    # PR is held to, or a pin move becomes a way to smuggle any version at
+    # all past the validator.
+    if old_versions or new_versions:
+        if len(old_versions) != 1 or len(new_versions) != 1:
+            verdict.problems.append(
+                Problem(
+                    "ambiguous-version",
+                    f"{len(old_versions)} old and {len(new_versions)} new version(s) across "
+                    f"the diff; a bump is one version to one other",
+                )
+            )
+        else:
+            old, new = old_versions.pop(), new_versions.pop()
+            kind = bump_kind(old, new)
+            if kind is None:
+                verdict.problems.append(
+                    Problem("not-a-bump", f"{old} -> {new} is not a forward bump of one part")
+                )
+            else:
+                verdict.bump = (old, new, kind)
+
+    for pkg in sorted(set(removed) | set(added)):
+        olds, news = removed.get(pkg, set()), added.get(pkg, set())
+        if len(olds) != 1 or len(news) != 1:
+            verdict.problems.append(
+                Problem(
+                    "ambiguous-pin-move",
+                    f"{pkg}: {len(olds)} revision(s) removed and {len(news)} added; "
+                    f"a pin move is one revision to one other",
+                )
+            )
+            continue
+        old, new = olds.pop(), news.pop()
+        known = published_revs(pkg)
+        if known is None:
+            verdict.problems.append(
+                Problem("unverifiable-pin", f"{pkg}: the registry could not say what it published")
+            )
+            continue
+        if not any(sha.startswith(new) or new.startswith(sha) for sha in known):
+            verdict.problems.append(
+                Problem(
+                    "unpublished-pin-target",
+                    f"{pkg}: moves to {new[:12]}, which the registry never published; "
+                    f"installing that pin is the failure this rule exists to stop",
+                )
+            )
+            continue
+        verdict.moves[pkg] = (old, new)
+
+    if not verdict.problems and not verdict.moves:
+        verdict.problems.append(Problem("no-pin-move", "no dependency pin changed"))
+    return verdict

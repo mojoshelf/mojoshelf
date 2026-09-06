@@ -89,6 +89,28 @@ def _show_diffs(slugs: list[str], repos) -> None:
                 print(f"      … truncated at {_DIFF_LINES} changed lines")
 
 
+def _already_open(slugs: list[str], repos) -> list[str]:
+    """The open pull requests of the repos a command is about to act on.
+
+    Re-running a command that opens a PR when its PR is already open pushes
+    the same branch again and leaves the plan exactly where it was. The
+    listing failing is not evidence of nothing open, so an unreadable repo
+    is reported rather than treated as clear.
+    """
+    by_slug = {r.slug: r for r in repos}
+    found = []
+    for slug in slugs:
+        r = by_slug.get(slug)
+        if r is None:
+            continue
+        prs = gitutil.open_prs(r.org, r.name)
+        if prs is None:
+            found.append(f"{slug}: could not list its pull requests — assuming something is open")
+            continue
+        found.extend(f"{slug}#{pr['number']}  {pr['title']}" for pr in prs)
+    return found
+
+
 def cmd_run(args, config: Config) -> int:
     if not sys.stdin.isatty():
         print(
@@ -101,6 +123,7 @@ def cmd_run(args, config: Config) -> int:
     from .__main__ import build_parser
 
     done = 0
+    last_signature: tuple[str, ...] | None = None
     while True:
         repos, findings = diagnose(config, args)
         shown = [f for f in findings if args.verbose or f.level != INFO]
@@ -116,6 +139,19 @@ def cmd_run(args, config: Config) -> int:
             return 0
 
         step = plan.steps[0]
+        # The safety net, whatever the cause: if the last step left the plan
+        # exactly where it was, running it again will do the same. Stop
+        # before repeating it, not after.
+        signature = tuple(c.text for c in step.commands)
+        if signature == last_signature:
+            print(
+                "\nthe last step changed nothing — the plan is exactly where it was, so "
+                "running it again\nwould do the same. Something outside the plan is "
+                "blocking it; the notes above say what."
+            )
+            return 1
+        last_signature = signature
+
         remaining = len(plan.steps)
         print(f"\n{'━' * 72}\nstep 1 of {remaining}{'' if remaining == 1 else ' remaining'}")
         print(f"\n  {step.why}\n")
@@ -140,7 +176,24 @@ def cmd_run(args, config: Config) -> int:
             print("\nskipped — later steps may depend on it; re-check with `tins doctor`")
             return 0
 
-        for c in step.commands:
+        # A command that opens PRs must not run again while its PRs are
+        # still open: it would push the same branch a second time and the
+        # plan would never converge. This is exactly what happened when
+        # `merge` refused a repin PR -- the loop re-offered `repin` forever.
+        todo = list(step.commands)
+        if todo and todo[0].opens_prs:
+            already = _already_open(todo[0].slugs, repos)
+            if already:
+                print(
+                    "\nskipping `"
+                    + todo[0].text
+                    + "` — its work is already open:\n  "
+                    + "\n  ".join(already)
+                )
+                todo = todo[1:]
+                _show_diffs(step.commands[0].slugs, repos)
+
+        for c in todo:
             print(f"\n$ {c.text}")
             sub = build_parser().parse_args(c.argv)
             sub.config = args.config
