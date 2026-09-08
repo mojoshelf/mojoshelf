@@ -19,6 +19,11 @@ from dataclasses import dataclass, field
 # something vague, and beats silence — a reader who sees four of five
 # findings addressed will assume the fifth was handled too.
 NO_COMMAND = {
+    "missing-changelog-entry": (
+        "write the entry by hand and land it on main before the release step above — "
+        "`tins merge` refuses a release PR that touches anything but the version files, "
+        "so the changelog cannot ride along in the bump"
+    ),
     "shelf-tins-drift": "add the missing pins to shelf.toml's `tins` list by hand",
     "unregistered": "publish once by hand, or drop it from the workspace",
     "dirty": "commit or discard the local changes",

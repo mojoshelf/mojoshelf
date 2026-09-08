@@ -128,6 +128,7 @@ Checks every repo against the registry and exits non-zero on an error.
 | `unpublished-pin` | error | a pin names a revision the registry never published |
 | `outdated-pin` | warning | a pin names an older release than the newest |
 | `stale-release` | error | the published version's revision is behind main, and `src/` changed |
+| `missing-changelog-entry` | warning | a release is owed and no changelog entry describes it |
 | `unpublished` | warning | the local version is not on the registry yet |
 | `shelf-tins-drift` | warning | `shelf.toml`'s `tins` list omits something the package pins |
 | `unreleased-commits` | info | main is past the published revision, but only CI/docs moved |
@@ -145,6 +146,47 @@ nothing else notices that a merged fix reaches nobody. It fires only when
 `src/` differs between the published revision and main — a README or CI
 commit moves the sha without changing a byte anyone installs, and is
 reported as `unreleased-commits` instead.
+
+`missing-changelog-entry` hangs off exactly that condition, and only that
+one. A release that is owed is also a changelog entry that is owed, and the
+entry is the half nothing else checks: a pull request merges green with no
+note of what it changed, and the only thing that catches it is somebody
+diffing the commit log against the changelog by hand before rolling the
+version — the review that decays. It fires two ways and says which: no
+`CHANGELOG.md` at all, so one needs starting in [Keep a
+Changelog](https://keepachangelog.com/en/1.1.0/) form; or a `CHANGELOG.md`
+whose `[Unreleased]` section is missing or empty, so the entry needs
+writing.
+
+**A repo with no pending release owes no entry, and that is the point.**
+Most tins have no changelog on purpose — one is started when a project next
+publishes, never backfilled across the shelf — so a check that reported
+every repo without the file would report nineteen of twenty-two, and be
+ignored along with everything else `doctor` says.
+
+It is a warning rather than an error for the same reason. It only ever
+appears beside `stale-release`, which is already an error, so the exit code
+is 1 either way and nothing is gained by promoting it; and it is the one
+finding here that reads prose, where a false positive would be paid for in
+an exit code somebody has to route around. Two shapes are accepted as an
+entry: a non-empty `[Unreleased]`, and a `## [x.y.z]` section numbered above
+the published release — rolling `[Unreleased]` under its version is the last
+commit before the bump, so a repo that has already done the right thing is
+not asked to do it again.
+
+**What it does not judge is whether the entry is any good.** Non-empty is
+the whole test; a section holding nothing but `### Added` sub-headings is a
+skeleton and counts as empty, and everything else counts. Guessing at
+adequacy — that an entry mentions the files that changed, say — would fire on
+entries written the way these are, in terms of behaviour rather than paths,
+and could still be satisfied by one junk word. It would buy nothing and cost
+false positives.
+
+`tins release` prints the same note beside each bump it is about to open,
+because that is the last moment it is cheap to act on: `merge` refuses a
+release PR that touches anything but the version files, so the entry has to
+land on main separately and ahead of the bump. It stays a note there too —
+`release` is not blocked by it.
 
 **Doctor reads `origin/main`, not your working tree.** It fetches first, so
 the answer describes what a consumer would install rather than what happens
@@ -225,6 +267,10 @@ already reviewed.
 tins release --org magmalake          # print the plan
 tins release --org magmalake --yes    # open the PRs
 ```
+
+Each planned bump is checked for a changelog entry and flagged if it has
+none — `doctor`'s `missing-changelog-entry`, said again at the moment it is
+still cheap to fix. It is a note, not a refusal.
 
 The PR body is generated: the published revision, main's revision, the
 commit subjects between them, and the `src/` files that changed. Repos
@@ -353,6 +399,9 @@ environments and ships without one.
   drifts the moment a README commit lands.
 - **The version lives in three files** — `pixi.toml` twice and
   `shelf.toml` — and `shelf publish` reads the third one.
+- **A changelog entry lands on main before the bump**, never inside the
+  release PR: `merge` refuses a release PR that changes anything but the
+  version files, so an entry written into one costs a second pull request.
 - **Publish bottom-up.** The order comes from the package graph.
 - **Locks are written by the pinned pixi**, not whatever is on `PATH`: a
   newer pixi refuses a lock an older one wrote.

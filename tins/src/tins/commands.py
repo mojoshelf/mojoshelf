@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import tomllib
 from dataclasses import dataclass, field
@@ -240,6 +241,92 @@ def _packaged_changes(repo: Repo, old: str, new: str, changed: list[str]) -> lis
     return packaged
 
 
+# ------------------------------------------------------------- changelogs
+
+CHANGELOG = "CHANGELOG.md"
+
+# A [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) file is a list of
+# `## [something]` sections: one per release, plus `## [Unreleased]` for the
+# work that has not been given a number yet. Nothing below assumes more than
+# that heading shape.
+_H2 = re.compile(r"^##[ \t]+(?P<head>.*)$", re.M)
+_BRACKETED = re.compile(r"\[([^\]]+)\]")
+_SEMVER = re.compile(r"\d+\.\d+\.\d+\Z")
+
+
+def _changelog_sections(text: str) -> list[tuple[str, str]]:
+    """(heading, body) for every `## ` section, in file order."""
+    marks = list(_H2.finditer(text))
+    ends = [m.start() for m in marks[1:]] + [len(text)]
+    return [(m.group("head").strip(), text[m.end() : end]) for m, end in zip(marks, ends)]
+
+
+def _has_entries(body: str) -> bool:
+    """Whether a section body holds anything that reads as an entry.
+
+    Keep a Changelog files their entries under `### Added` and friends, so a
+    section holding nothing but those sub-headings holds no entries — that is
+    a skeleton somebody left behind, not a description of a release. Every
+    other non-blank line counts, deliberately: whether the prose is any
+    *good* is not a judgement a release tool can make without inventing
+    failures, and a false refusal here costs more than a thin entry does.
+    """
+    return any(line.strip() and not line.lstrip().startswith("#") for line in body.splitlines())
+
+
+def _describes_unreleased_work(text: str, published: str) -> bool:
+    """Whether the changelog already describes work that is not published yet.
+
+    Usually that is a non-empty `## [Unreleased]`. It is equally satisfied by
+    a `## [x.y.z]` section numbered above the published release: rolling
+    `[Unreleased]` under its version is the last commit before the bump —
+    `tins merge` refuses a release PR that touches anything but the version
+    files, so the roll has to land on main separately and ahead of it — and
+    the entry it moved is still the entry for the release that is owed.
+    Missing that second shape would fire on every release the moment it was
+    prepared correctly, which is the way to get a check ignored.
+    """
+    try:
+        floor = tuple(int(p) for p in published.split("."))
+    except ValueError:
+        floor = ()  # an unparsable version: only [Unreleased] can answer
+    for head, body in _changelog_sections(text):
+        labels = _BRACKETED.findall(head)
+        if not _has_entries(body):
+            continue
+        if any(label.strip().lower() == "unreleased" for label in labels):
+            return True
+        for label in (x.strip() for x in labels):
+            if not floor or not _SEMVER.fullmatch(label):
+                continue
+            if tuple(int(p) for p in label.split(".")) > floor:
+                return True
+    return False
+
+
+def _changelog_gap(repo: Repo, published: str) -> str | None:
+    """Why the changelog does not cover the release `repo` owes, or None.
+
+    Only ever asked of a repo that is already owed a release, which is the
+    whole reason this is affordable: most of these repos have no CHANGELOG.md
+    and are not meant to acquire one until they next publish, so a check that
+    asked every repo would report nineteen files that nobody wants written.
+    """
+    text = read_at_ref(repo.path, CHANGELOG, repo.ref)
+    if text is None:
+        return (
+            f"there is no {CHANGELOG}: start one in Keep a Changelog format with an "
+            f"[Unreleased] entry for the work being released (a changelog that begins "
+            f"mid-history says so in its preamble, as iceberg.mojo's does)"
+        )
+    if _describes_unreleased_work(text, published):
+        return None
+    return (
+        f"{CHANGELOG} records nothing since {published} — its [Unreleased] section is "
+        f"missing or empty: write the entry on main before the version is bumped, or the "
+        f"release ships undescribed"
+    )
+
 
 def _print_findings(findings: list[Finding], verbose: bool = False) -> None:
     shown = [f for f in findings if verbose or f.level != INFO]
@@ -394,6 +481,21 @@ def diagnose(config: Config, args) -> tuple[list[Repo], list[Finding]]:
                             f"and published",
                         )
                     )
+                    # A release that is owed is also a changelog entry that is
+                    # owed, and the entry is the half nothing else checks: a
+                    # pull request can merge green with no note of what it
+                    # changed, and the only thing that catches it is somebody
+                    # reading the commit log against the changelog by hand
+                    # before rolling the version. That is exactly the review
+                    # that decays. Asked only here, and only of a repo already
+                    # owed a release, because most repos have no changelog on
+                    # purpose — one is started when a project next publishes,
+                    # not backfilled — and a finding on all of them would be
+                    # noise that gets the rest of doctor skipped too.
+                    if gap := _changelog_gap(r, r.version):
+                        findings.append(
+                            Finding(r.slug, WARN, "missing-changelog-entry", gap)
+                        )
                 elif changed:
                     findings.append(
                         Finding(
@@ -718,6 +820,14 @@ def cmd_release(args, config: Config) -> int:
     print("will open version-bump PRs for:")
     for r, old, new, packaged, changed in plan:
         print(f"  {r.tin}  {old} -> {new}   ({len(packaged)} src file(s) of {len(changed)})")
+        # Said here as well as in doctor because this is the last moment it
+        # can be acted on cheaply. The entry has to be on main *before* the
+        # bump — `tins merge` refuses a release PR that touches anything but
+        # the version files — so once these PRs are open, writing the
+        # changelog costs a second pull request. It is a note, not a refusal:
+        # the judgement is the reader's and the check reads prose.
+        if gap := _changelog_gap(r, old):
+            print(f"  ! {gap}")
     if not args.yes:
         print("\nre-run with --yes to open them")
         return 0
