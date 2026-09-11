@@ -752,12 +752,28 @@ shelf extension installed once:</p>
 <pre><code>pixi shelf add {name}</code></pre>
 <p class="install-label">the same, with plain pixi (no shelf extension needed)</p>
 <pre><code>pixi add --git {url} \
-    --rev {sha} {name}</code></pre>
+    --rev {sha}{sub} {name}</code></pre>
 <p class="install-label">submodule mode: pinned source under <code>shelf/{name}</code></p>
-<pre><code>shelf add {name}</code></pre>"#,
+<pre><code>shelf add {name}</code></pre>{sub_note}"#,
             name = esc(&d.name),
             url = esc(&d.url),
             sha = esc(&latest.commit_sha),
+            sub = d
+                .subdirectory
+                .as_deref()
+                .map(|dir| format!(" \\\n    --subdirectory {}", esc(dir)))
+                .unwrap_or_default(),
+            sub_note = d
+                .subdirectory
+                .as_deref()
+                .map(|dir| format!(
+                    "<p class=\"install-label\">this tin lives in <code>{}/</code> of a \
+                     repository that publishes more than one tin — plain pixi needs \
+                     the <code>--subdirectory</code>; <code>pixi shelf add</code> \
+                     knows it from the registry.</p>",
+                    esc(dir)
+                ))
+                .unwrap_or_default(),
         ),
         None => "<p>No published versions yet.</p>".to_string(),
     };
@@ -910,6 +926,34 @@ dependency; the dependency is built into the build environment first.</li>
 <p>The same machinery distributes the <code>shelf</code> CLI itself: a conda
 package on the static channel at <code>/channel</code>, installed with
 <code>pixi global install</code>.</p>
+<h2>One repo, more than one tin</h2>
+<p>A library whose optional half pulls in heavy dependencies can ship that half
+as a <em>separate tin from the same repository</em>, so the dependencies stay
+optional at install time rather than only at compile time. Put a second
+<code>pixi.toml</code> and <code>shelf.toml</code> in a subdirectory, with its
+sources beneath it — a subdirectory manifest's build context is the
+subdirectory, not the repo root — and depend on the root package by relative
+path:</p>
+<pre><code># full/pixi.toml
+[package]
+name = "parquet-full-mojo"
+
+[package.build.config.pkg]
+path = "src/parquet_full"      # i.e. full/src/parquet_full
+name = "parquet_full"
+
+[package.host-dependencies]
+parquet-mojo = { path = ".." }  # the root package, same commit</code></pre>
+<p>Publish it by running <code>shelf publish</code> <em>from that directory</em>.
+The registry records where the manifest sits, and consumers get it
+automatically:</p>
+<pre><code>pixi shelf add parquet-full-mojo
+# writes: { git = "…/parquet.mojo", rev = "…", subdirectory = "full" }</code></pre>
+<p>Both tins move together on one commit, so there is no re-pinning between
+them — <code>path = ".."</code> always means the revision being built. The
+usual rule still applies in the other direction: a path dependency that climbs
+<em>past</em> the repository root resolves in nobody's checkout and is refused
+at publish.</p>
 <h2>A pypi/wheel backend?</h2>
 <p>Wheels are a plausible <em>additional</em> distribution for pure-Mojo,
 Python-facing tins: PyPI hosting is universal, <code>uv</code> is fast, plain

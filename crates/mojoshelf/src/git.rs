@@ -28,6 +28,22 @@ pub fn repo_root() -> Result<PathBuf> {
     Ok(PathBuf::from(root))
 }
 
+/// Where `dir` sits inside its repository, as a slash-separated path with no
+/// trailing slash — `None` at the root.
+///
+/// This is what lets a tin publish from a subdirectory without anyone
+/// declaring where it lives: `shelf publish` run in `full/` reports `full`,
+/// and consumers get `subdirectory = "full"` on the git dependency.
+pub fn repo_prefix(dir: &Path) -> Result<Option<String>> {
+    let prefix = git(dir, &["rev-parse", "--show-prefix"])?;
+    let prefix = prefix.trim_matches('/');
+    Ok(if prefix.is_empty() {
+        None
+    } else {
+        Some(prefix.to_string())
+    })
+}
+
 /// Submodule paths under shelf/ with their pinned commits, from `.gitmodules`.
 pub fn installed_tins(root: &Path) -> Result<Vec<(String, String)>> {
     if !root.join(".gitmodules").exists() {
