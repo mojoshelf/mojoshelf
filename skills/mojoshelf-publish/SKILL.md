@@ -101,7 +101,30 @@ pixi shelf add parquet-full-mojo
 # writes { git = "…", rev = "…", subdirectory = "full" }
 ```
 
-Publish bottom-up here too: the root tin first, then the subdirectory one.
+Publish bottom-up here too: the root tin first, then the subdirectory one —
+**in the same session, from the same commit.**
+
+Two rules, each of which ships an uninstallable tin when broken:
+
+- **Every tin in the repo publishes at the same commit.** `path = ".."`
+  resolves to `git+<repo>?rev=<the commit the subdirectory tin was published
+  at>`. If the registry pins the root at a different commit, consumers get two
+  source records for one package and `pixi shelf add` fails with `encountered
+  duplicate records for <root>-…_source.conda`.
+- **Do not list an in-repo path dependency in `tins`.** That field is for tins
+  the registry resolves. The root is already reached through `path = ".."`;
+  naming it there pins it a second time and causes the same collision. A tin's
+  own FFI shim is not listed either.
+
+Also make sure the `shelf` CLI is new enough to know about subdirectories
+(0.5.0+). An older CLI publishes with no subdirectory recorded, and the install
+fails with *"the package '<name>' is not provided by the project located at
+git+…"* — which reads like a packaging bug in the tin rather than version skew
+in the publisher. Check what the registry actually stored:
+
+```sh
+curl -s https://mojoshelf.org/api/tins/<name> | grep -o '"subdirectory":[^,]*'
+```
 
 ## Typical flow
 
