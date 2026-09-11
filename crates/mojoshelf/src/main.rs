@@ -158,6 +158,7 @@ mod tests {
             kind: "source".into(),
             prev_url: None,
             url_changed_at: None,
+            subdirectory: None,
         }
     }
 
@@ -575,8 +576,11 @@ Then verify with `pixi build` before publishing."
 
 fn publish(reg: &Registry) -> Result<()> {
     let manifest_path = Path::new("shelf.toml");
-    let raw = std::fs::read_to_string(manifest_path)
-        .context("no shelf.toml here; run publish from the tin's repo root")?;
+    let raw = std::fs::read_to_string(manifest_path).context(
+        "no shelf.toml here; run publish from the directory holding the tin's \
+         shelf.toml — the repo root, or the subdirectory of a repo that \
+         publishes more than one tin",
+    )?;
     let manifest: Manifest = toml::from_str(&raw).context("could not parse shelf.toml")?;
     semver::Version::parse(&manifest.version)
         .with_context(|| format!("'{}' in shelf.toml is not valid semver", manifest.version))?;
@@ -591,6 +595,11 @@ fn publish(reg: &Registry) -> Result<()> {
     let commit_sha = git::head_commit(&cwd)?;
     let origin = git::git(&cwd, &["remote", "get-url", "origin"])
         .context("no 'origin' remote; publishing needs a public repo URL")?;
+    // A repo may publish more than one tin, each from its own directory —
+    // parquet.mojo ships `parquet-mojo` from the root and `parquet-full-mojo`
+    // from `full/`. Where the manifest sits is the whole declaration; nothing
+    // in shelf.toml has to repeat it.
+    let subdirectory = git::repo_prefix(&cwd)?;
     warn_if_not_pixi_consumable(&manifest);
     reg.publish(&PublishRequest {
         name: manifest.name.clone(),
@@ -600,12 +609,22 @@ fn publish(reg: &Registry) -> Result<()> {
         description: manifest.description.clone(),
         tags: manifest.tags.clone(),
         dependencies: manifest.tins,
+        subdirectory: subdirectory.clone(),
     })?;
-    println!(
-        "published {} {} ({})",
-        manifest.name,
-        manifest.version,
-        &commit_sha[..12]
-    );
+    match &subdirectory {
+        Some(dir) => println!(
+            "published {} {} ({}) from {}/",
+            manifest.name,
+            manifest.version,
+            &commit_sha[..12],
+            dir
+        ),
+        None => println!(
+            "published {} {} ({})",
+            manifest.name,
+            manifest.version,
+            &commit_sha[..12]
+        ),
+    }
     Ok(())
 }

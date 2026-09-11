@@ -61,6 +61,48 @@ The first publish of a new name registers the tin, owned by the publishing
 author; later publishes must come from the same author (registry answers
 403 otherwise).
 
+It also refuses a version whose manifest declares a dependency by a path
+outside the repository (`{ path = "../sibling" }`), because that resolves in
+your checkout and nobody else's.
+
+## One repo, more than one tin
+
+A repository can publish several tins — useful when an optional half of a
+library pulls in heavy dependencies and you want them optional at *install*
+time, not just at compile time. Give the second tin its own subdirectory
+holding a `pixi.toml`, a `shelf.toml`, and its sources:
+
+```
+parquet.mojo/
+  pixi.toml  shelf.toml      parquet-mojo
+  src/parquet/
+  full/
+    pixi.toml  shelf.toml    parquet-full-mojo
+    src/parquet_full/        sources live under the subdirectory
+```
+
+Two things to get right:
+
+- A subdirectory manifest's build context is **the subdirectory**, so
+  `[package.build.config.pkg] path` is relative to it (`src/parquet_full`
+  means `full/src/parquet_full`).
+- Depend on the root package by relative path — `parquet-mojo = { path = ".." }`
+  in `[package.host-dependencies]`. This is inside the repository, so it is
+  allowed, and it always means the commit being built: the two tins move
+  together and never need re-pinning against each other.
+
+Publish it by running `shelf publish` **from that subdirectory**. Where the
+manifest sits is the whole declaration — nothing in `shelf.toml` repeats it —
+and the registry hands consumers the right `subdirectory` automatically:
+
+```sh
+cd full && shelf publish        # "published parquet-full-mojo 0.1.0 (abc123…) from full/"
+pixi shelf add parquet-full-mojo
+# writes { git = "…", rev = "…", subdirectory = "full" }
+```
+
+Publish bottom-up here too: the root tin first, then the subdirectory one.
+
 ## Typical flow
 
 ```sh

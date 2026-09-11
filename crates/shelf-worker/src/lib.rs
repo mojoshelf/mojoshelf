@@ -472,6 +472,9 @@ async fn api_resolve(req: Request, ctx: RouteContext<()>) -> Result<Response> {
                     kind: "channel".into(),
                     prev_url: tin.prev_url,
                     url_changed_at: tin.url_changed_at,
+                    // A channel package is resolved by name from the conda
+                    // channel; there is no git tree to point into.
+                    subdirectory: None,
                 },
             );
             continue;
@@ -504,6 +507,7 @@ async fn api_resolve(req: Request, ctx: RouteContext<()>) -> Result<Response> {
                 kind: "source".into(),
                 prev_url: tin.prev_url,
                 url_changed_at: tin.url_changed_at,
+                subdirectory: tin.subdirectory,
             },
         );
     }
@@ -573,12 +577,38 @@ async fn api_publish(mut req: Request, ctx: RouteContext<()>) -> Result<Response
     if body.url.is_empty() {
         return error_json("url is required", 400);
     }
+    // The subdirectory ends up in a git source dependency consumers resolve,
+    // so it has to be a plain relative path inside the repository.
+    let subdirectory = match body.subdirectory.as_deref().map(str::trim) {
+        None | Some("") | Some(".") => None,
+        Some(dir) => {
+            let dir = dir.trim_matches('/');
+            let bad = dir.is_empty()
+                || dir.starts_with('~')
+                || dir.contains('\\')
+                || dir
+                    .split('/')
+                    .any(|p| p.is_empty() || p == "." || p == "..");
+            if bad {
+                return error_json(
+                    &format!(
+                        "subdirectory '{dir}' must be a relative path inside \
+                         the repository, with no '..' segments"
+                    ),
+                    400,
+                );
+            }
+            Some(dir.to_string())
+        }
+    };
 
     // A tin whose manifest points at sibling checkouts builds for its author
     // and nobody else. Catch it here, where the fix is one edit away, rather
     // than days later through a red verification badge.
-    if let Some(text) = manifest::fetch(&body.url, &body.commit_sha).await {
-        let escaping = manifest::escaping_path_deps(&text);
+    if let Some(text) = manifest::fetch(&body.url, &body.commit_sha, subdirectory.as_deref()).await
+    {
+        let depth = manifest::subdirectory_depth(subdirectory.as_deref());
+        let escaping = manifest::escaping_path_deps(&text, depth);
         if !escaping.is_empty() {
             let detail = escaping
                 .iter()
@@ -623,15 +653,31 @@ async fn api_publish(mut req: Request, ctx: RouteContext<()>) -> Result<Response
                     403,
                 );
             }
-            db::claim_tin(&d1, existing.id, &body.url, author.id, description, &tags)
-                .await
-                .at()?;
+            db::claim_tin(
+                &d1,
+                existing.id,
+                &body.url,
+                author.id,
+                description,
+                &tags,
+                subdirectory.as_deref(),
+            )
+            .await
+            .at()?;
             existing
         }
         None => {
-            db::create_tin(&d1, &body.name, &body.url, author.id, description, &tags)
-                .await
-                .at()?;
+            db::create_tin(
+                &d1,
+                &body.name,
+                &body.url,
+                author.id,
+                description,
+                &tags,
+                subdirectory.as_deref(),
+            )
+            .await
+            .at()?;
             db::tin_by_name(&d1, &body.name)
                 .await
                 .at()?

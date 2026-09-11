@@ -63,9 +63,14 @@ fn add_inner(reg: &Registry, specs: &[String], dry_run: bool, force: bool) -> Re
             if b.kind == "channel" {
                 println!("  pixi add {}  # modular-community channel", b.name);
             } else {
+                let sub = b
+                    .subdirectory
+                    .as_deref()
+                    .map(|d| format!(" --subdirectory {d}"))
+                    .unwrap_or_default();
                 println!(
-                    "  pixi add --git {} --rev {} {}",
-                    b.url, b.commit_sha, b.name
+                    "  pixi add --git {} --rev {}{} {}",
+                    b.url, b.commit_sha, sub, b.name
                 );
             }
         }
@@ -89,13 +94,29 @@ fn add_inner(reg: &Registry, specs: &[String], dry_run: bool, force: bool) -> Re
                 b.name, b.version
             );
         } else {
-            run_pixi(&["add", "--git", &b.url, "--rev", &b.commit_sha, &b.name])?;
-            println!(
-                "added {} {} ({}) as a pixi git dependency",
-                b.name,
-                b.version,
-                &b.commit_sha[..12]
-            );
+            // A repo that publishes more than one tin points each at its own
+            // directory; pixi resolves the package from there.
+            let mut args = vec!["add", "--git", &b.url, "--rev", &b.commit_sha];
+            if let Some(dir) = b.subdirectory.as_deref() {
+                args.extend_from_slice(&["--subdirectory", dir]);
+            }
+            args.push(&b.name);
+            run_pixi(&args)?;
+            match b.subdirectory.as_deref() {
+                Some(dir) => println!(
+                    "added {} {} ({}) as a pixi git dependency, from {}/",
+                    b.name,
+                    b.version,
+                    &b.commit_sha[..12],
+                    dir
+                ),
+                None => println!(
+                    "added {} {} ({}) as a pixi git dependency",
+                    b.name,
+                    b.version,
+                    &b.commit_sha[..12]
+                ),
+            }
         }
     }
     Ok(())
@@ -218,10 +239,26 @@ fn include_dirs(root: &std::path::Path) -> Vec<String> {
         let mut tins: Vec<_> = entries.flatten().map(|e| e.file_name()).collect();
         tins.sort();
         for tin in tins {
-            let src = format!("shelf/{}/src", tin.to_string_lossy());
+            let tin = tin.to_string_lossy().into_owned();
+            let src = format!("shelf/{tin}/src");
             if root.join(&src).is_dir() {
                 dirs.push(src);
             }
+            // A repo that publishes more than one tin keeps the others in
+            // subdirectories, and a submodule clones the whole repo — so a
+            // sibling's source root is sitting right there, and the tin the
+            // consumer actually asked for may be the one inside it.
+            let mut subs: Vec<String> = std::fs::read_dir(root.join("shelf").join(&tin))
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|sub| !sub.starts_with('.') && sub != "src")
+                .filter(|sub| root.join(format!("shelf/{tin}/{sub}/src")).is_dir())
+                .map(|sub| format!("shelf/{tin}/{sub}/src"))
+                .collect();
+            subs.sort();
+            dirs.extend(subs);
         }
     }
     dirs

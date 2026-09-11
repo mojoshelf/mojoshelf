@@ -1,0 +1,11 @@
+-- Where a tin's Mojo package sits inside its repository, for repos that
+-- publish more than one tin. parquet.mojo publishes `parquet-mojo` from the
+-- root and `parquet-full-mojo` from `full/`, so the FFI codecs are a separate
+-- tin without a separate repository, CI matrix or release.
+--
+-- NULL means the package is at the repository root — every tin published
+-- before this column existed, and almost every one after it.
+--
+-- Consumers need this on the git source dependency pixi writes:
+--   parquet-full-mojo = { git = "…/parquet.mojo", rev = "…", subdirectory = "full" }
+ALTER TABLE tins ADD COLUMN subdirectory TEXT;

@@ -53,6 +53,12 @@ pub struct TinSummary {
     /// mojo-compiler version of the last nightly check (best effort).
     #[serde(default)]
     pub nightly_compiler: Option<String>,
+    /// Subdirectory of the repository holding this tin's Mojo package, for a
+    /// repo that publishes more than one tin (`parquet.mojo` publishes
+    /// `parquet-mojo` at the root and `parquet-full-mojo` from `full/`).
+    /// `None` — the overwhelming case — means the package is at the root.
+    #[serde(default)]
+    pub subdirectory: Option<String>,
 }
 
 pub fn default_kind() -> String {
@@ -132,6 +138,12 @@ pub struct TinDetail {
     /// mojo-compiler version of the last nightly check (best effort).
     #[serde(default)]
     pub nightly_compiler: Option<String>,
+    /// Subdirectory of the repository holding this tin's Mojo package, for a
+    /// repo that publishes more than one tin (`parquet.mojo` publishes
+    /// `parquet-mojo` at the root and `parquet-full-mojo` from `full/`).
+    /// `None` — the overwhelming case — means the package is at the root.
+    #[serde(default)]
+    pub subdirectory: Option<String>,
 }
 
 /// One entry of the flat install set from `GET /api/tins/:name/resolve`.
@@ -150,6 +162,12 @@ pub struct ResolvedTin {
     /// ISO timestamp of the most recent URL change (repo-swap warning).
     #[serde(default)]
     pub url_changed_at: Option<String>,
+    /// Subdirectory of the repository holding this tin's Mojo package, for a
+    /// repo that publishes more than one tin (`parquet.mojo` publishes
+    /// `parquet-mojo` at the root and `parquet-full-mojo` from `full/`).
+    /// `None` — the overwhelming case — means the package is at the root.
+    #[serde(default)]
+    pub subdirectory: Option<String>,
 }
 
 /// Body of `POST /api/publish`. The first publish of a new name registers
@@ -166,6 +184,12 @@ pub struct PublishRequest {
     #[serde(default)]
     pub tags: Vec<String>,
     pub dependencies: Vec<String>,
+    /// Subdirectory of the repository holding this tin's Mojo package, for a
+    /// repo that publishes more than one tin (`parquet.mojo` publishes
+    /// `parquet-mojo` at the root and `parquet-full-mojo` from `full/`).
+    /// `None` — the overwhelming case — means the package is at the root.
+    #[serde(default)]
+    pub subdirectory: Option<String>,
 }
 
 /// Error body returned by the registry API.

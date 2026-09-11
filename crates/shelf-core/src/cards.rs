@@ -203,9 +203,16 @@ pub fn assemble_card(d: &TinDetail, extras: &CardExtras) -> String {
             n = d.name
         ));
         if let Some(v) = d.versions.first() {
+            // A tin published from a subdirectory of a multi-tin repo has to
+            // say so here; `pixi shelf add` reads it from the registry.
+            let sub = d
+                .subdirectory
+                .as_deref()
+                .map(|dir| format!(" --subdirectory {dir}"))
+                .unwrap_or_default();
             out.push_str(&format!(
-                "\nOr with plain pixi (no shelf CLI):\n```sh\npixi add --git {} --rev {} {}\n```\n",
-                d.url, v.commit_sha, d.name
+                "\nOr with plain pixi (no shelf CLI):\n```sh\npixi add --git {} --rev {}{} {}\n```\n",
+                d.url, v.commit_sha, sub, d.name
             ));
         }
     }
@@ -338,6 +345,23 @@ mod tests {
         }
         assert!(!card.contains("guessed from the tin name"));
         assert!(card.len() <= CARD_MAX_BYTES);
+    }
+
+    #[test]
+    fn plain_pixi_install_names_the_subdirectory() {
+        // A tin published from a subdirectory of a multi-tin repo: without
+        // --subdirectory the plain-pixi line resolves the wrong package, or
+        // none at all.
+        let mut d = detail();
+        d.subdirectory = Some("full".into());
+        let card = assemble_card(&d, &CardExtras::default());
+        assert!(
+            card.contains("--subdirectory full zlib-mojo"),
+            "card missing the subdirectory:\n{card}"
+        );
+        // The root case stays exactly as it was.
+        let plain = assemble_card(&detail(), &CardExtras::default());
+        assert!(!plain.contains("--subdirectory"));
     }
 
     #[test]

@@ -39,6 +39,7 @@ pub struct TinRow {
     pub nightly_run_url: Option<String>,
     pub verified_reason: Option<String>,
     pub nightly_reason: Option<String>,
+    pub subdirectory: Option<String>,
 }
 
 impl TinRow {
@@ -63,6 +64,7 @@ const TIN_SELECT: &str = "SELECT b.id, b.name, b.url, b.description, b.author_id
     b.verified_at, b.verified_ok, b.verified_compiler, \
     b.nightly_at, b.nightly_ok, b.nightly_compiler, \
     b.verified_run_url, b.nightly_run_url, b.verified_reason, b.nightly_reason, \
+    b.subdirectory, \
     a.github_login AS author FROM tins b LEFT JOIN authors a ON a.id = b.author_id";
 
 /// Search predicate, shared by the list and its count so the pager can never
@@ -201,6 +203,7 @@ pub async fn list_tins(
                 nightly_at: b.nightly_at,
                 nightly_ok: b.nightly_ok.map(|v| v != 0),
                 nightly_compiler: b.nightly_compiler,
+                subdirectory: b.subdirectory,
                 name: b.name,
                 url: b.url,
                 description: b.description,
@@ -257,6 +260,7 @@ pub async fn tin_detail(d1: &D1Database, name: &str) -> Result<Option<TinDetail>
         nightly_at: tin.nightly_at,
         nightly_ok: tin.nightly_ok.map(|v| v != 0),
         nightly_compiler: tin.nightly_compiler,
+        subdirectory: tin.subdirectory,
         name: tin.name,
         url: tin.url,
         description: tin.description,
@@ -347,10 +351,11 @@ pub async fn create_tin(
     author_id: i64,
     description: Option<&str>,
     tags: &str,
+    subdirectory: Option<&str>,
 ) -> Result<()> {
     d1.prepare(
-        "INSERT INTO tins (name, url, author_id, description, tags) \
-         VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT INTO tins (name, url, author_id, description, tags, subdirectory) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
     )
     .bind(&[
         name.into(),
@@ -358,6 +363,7 @@ pub async fn create_tin(
         JsValue::from(author_id as f64),
         description.map(JsValue::from).unwrap_or(JsValue::NULL),
         tags.into(),
+        subdirectory.map(JsValue::from).unwrap_or(JsValue::NULL),
     ])?
     .run()
     .await
@@ -376,6 +382,7 @@ pub async fn claim_tin(
     author_id: i64,
     description: Option<&str>,
     tags: &str,
+    subdirectory: Option<&str>,
 ) -> Result<()> {
     d1.prepare(
         "UPDATE tins SET \
@@ -383,6 +390,7 @@ pub async fn claim_tin(
          url_changed_at = CASE WHEN url != ?2 \
              THEN strftime('%Y-%m-%dT%H:%M:%SZ', 'now') ELSE url_changed_at END, \
          url = ?2, author_id = ?3, description = ?4, tags = ?5, \
+         subdirectory = ?6, \
          updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
     )
     .bind(&[
@@ -391,6 +399,7 @@ pub async fn claim_tin(
         JsValue::from(author_id as f64),
         description.map(JsValue::from).unwrap_or(JsValue::NULL),
         tags.into(),
+        subdirectory.map(JsValue::from).unwrap_or(JsValue::NULL),
     ])?
     .run()
     .await
