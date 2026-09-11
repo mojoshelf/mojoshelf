@@ -949,8 +949,21 @@ The registry records where the manifest sits, and consumers get it
 automatically:</p>
 <pre><code>pixi shelf add parquet-full-mojo
 # writes: { git = "…/parquet.mojo", rev = "…", subdirectory = "full" }</code></pre>
-<p>Both tins move together on one commit, so there is no re-pinning between
-them — <code>path = ".."</code> always means the revision being built. The
+<p>Two rules make this work, and breaking either ships a tin nobody can
+install:</p>
+<p><strong>Publish every tin in the repo at the same commit.</strong>
+<code>path = ".."</code> resolves to
+<code>git+&lt;repo&gt;?rev=&lt;the commit the subdirectory tin was published
+at&gt;</code>. If the registry pins the root at a different commit, a consumer
+ends up with two source records for one package and the solve fails with
+<code>encountered duplicate records for &lt;root&gt;-…_source.conda</code>.</p>
+<p><strong>Do not list an in-repo path dependency in
+<code>shelf.toml</code>'s <code>tins</code>.</strong> That field is for tins
+the registry must resolve; the root package is already reached by
+<code>path = ".."</code>, and naming it as well pins it a second time — the
+same collision from the other side. A tin's own FFI shim is not listed either,
+for the same reason.</p>
+<p>Both tins then move together, so there is no re-pinning between them. The
 usual rule still applies in the other direction: a path dependency that climbs
 <em>past</em> the repository root resolves in nobody's checkout and is refused
 at publish.</p>
