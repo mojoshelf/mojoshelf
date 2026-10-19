@@ -54,12 +54,6 @@ jobs:
           - { tin: pontoneer, os: ubuntu-24.04-arm }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
-    # Matrix outputs collapse to the last writer per key — fine for a
-    # best-effort compiler version, since every job on one channel solves
-    # against the same repodata. Each job writes only its channel's key.
-    outputs:
-      compiler_stable: ${{ steps.compiler.outputs.stable }}
-      compiler_nightly: ${{ steps.compiler.outputs.nightly }}
     steps:
       - name: Install pixi and the shelf extension
         run: |
@@ -95,11 +89,13 @@ jobs:
           fi
           echo "OK: ${{ matrix.tin }} builds on $P"
       - name: Record the mojo-compiler version (best effort)
-        id: compiler
+        # Printed rather than set as a job output: matrix outputs collapse to
+        # the last writer, which labelled every tin with one arbitrary tin's
+        # compiler. The report job reads this line back from the job's log.
         run: |
           V=$(cd smoke && pixi list mojo-compiler 2>/dev/null \
             | awk '$1 == "mojo-compiler" { print $2; exit }') || true
-          echo "${{ matrix.channel }}=$V" >> "$GITHUB_OUTPUT"
+          echo "mojo-compiler-version: $V"
 
   # Report each tin's outcome to the registry (shown on tin pages and in
   # `shelf info`). Needs only the jobs API and the SHELF_TOKEN secret — no
@@ -115,28 +111,47 @@ jobs:
         env:
           SHELF_TOKEN: ${{ secrets.SHELF_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          COMPILER_STABLE: ${{ needs.smoke.outputs.compiler_stable }}
-          COMPILER_NIGHTLY: ${{ needs.smoke.outputs.compiler_nightly }}
         run: |
           if [ -z "$SHELF_TOKEN" ]; then
             echo "SHELF_TOKEN secret not set; skipping registry report"
             exit 0
           fi
-          JOBS=$(curl -sf -H "Authorization: Bearer $GH_TOKEN" \
-            "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100")
-          # Carries fail_job: one failed job per group, whose log supplies the
-          # reason below. Stripped again before reporting.
-          BASE=$(echo "$JOBS" | jq -c --arg cs "$COMPILER_STABLE" --arg cn "$COMPILER_NIGHTLY" '
-            [.jobs[]
+          # Every page: a full run has ~230 jobs and the API caps a page at
+          # 100, so reading one page silently reported fewer than half the
+          # tins and left the rest showing whatever an older run said.
+          echo "[]" > jobs.json
+          PAGE=1
+          while :; do
+            CHUNK=$(curl -sf -H "Authorization: Bearer $GH_TOKEN" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100&page=$PAGE" \
+              | jq -c '.jobs')
+            jq -c --argjson c "$CHUNK" '. + $c' jobs.json > jobs.next && mv jobs.next jobs.json
+            [ "$(echo "$CHUNK" | jq length)" -lt 100 ] && break
+            PAGE=$((PAGE + 1))
+          done
+          echo "jobs read: $(jq length jobs.json)"
+          # Carries fail_job (one failed job per group, whose log supplies the
+          # reason) and ok_job (one passing job, whose log names the compiler).
+          # Both are stripped again before reporting.
+          BASE=$(jq -c '
+            [.[]
              | select(.name | startswith("smoke ("))
              | (.name | capture("^smoke \\((?<t>[^,]+), (?<os>[^,]+), (?<ch>[^,)]+)\\)")) as $m
              | {tin: $m.t, channel: $m.ch, ok: (.conclusion == "success"), id: .id}]
             | group_by([.tin, .channel])
             | map({name: .[0].tin, channel: .[0].channel, ok: all(.[]; .ok),
                    fail_job: ([.[] | select(.ok | not) | .id] | first),
-                   run_url: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}
-                  + (([$cs, $cn][if .[0].channel == "nightly" then 1 else 0 end]) as $c
-                     | if $c == "" then {} else {compiler: $c} end))')
+                   ok_job: ([.[] | select(.ok) | .id] | first),
+                   run_url: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"})' jobs.json)
+
+          # The logs endpoint redirects to a signed URL that must be fetched
+          # without the Authorization header.
+          job_log() {
+            LOC=$(curl -s -o /dev/null -w '%{redirect_url}' \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/jobs/$1/logs")
+            curl -sL "$LOC" || true
+          }
 
           # A link to a run still leaves the reader to open a job, expand a
           # step and scroll. Pull the line that explains the failure so the tin
@@ -146,20 +161,24 @@ jobs:
             JOB=$(echo "$row" | jq -r '.fail_job // empty')
             REASON=""
             if [ -n "$JOB" ]; then
-              # The logs endpoint redirects to a signed URL that must be
-              # fetched without the Authorization header.
-              LOC=$(curl -s -o /dev/null -w '%{redirect_url}' \
-                -H "Authorization: Bearer $GH_TOKEN" \
-                "https://api.github.com/repos/${{ github.repository }}/actions/jobs/$JOB/logs")
-              LOG=$(curl -sL "$LOC" || true)
+              LOG=$(job_log "$JOB")
               # pixi prints the innermost cause after ╰─▶; failing that, the
               # command that gave up.
               REASON=$(echo "$LOG" | grep -a '╰─▶' | tail -1 || true)
               [ -z "$REASON" ] && REASON=$(echo "$LOG" | grep -aE 'error:' | tail -1 || true)
               REASON=$(echo "$REASON" | sed 's/^[0-9][0-9T:.Z-]* //' | tr -d '\r' | cut -c1-300)
             fi
-            jq -c --argjson r "$(echo "$row" | jq -c 'del(.fail_job)')" --arg reason "$REASON" \
-              '. + [$r + (if $reason == "" then {} else {reason: $reason} end)]' \
+            # Matching a digit skips the script echo, which shows a literal $V.
+            COMPILER=""
+            OKJOB=$(echo "$row" | jq -r '.ok_job // empty')
+            if [ -n "$OKJOB" ]; then
+              COMPILER=$(job_log "$OKJOB" | grep -aoE 'mojo-compiler-version: [0-9][^[:space:]]*' \
+                | tail -1 | awk '{print $2}' || true)
+            fi
+            jq -c --argjson r "$(echo "$row" | jq -c 'del(.fail_job, .ok_job)')" \
+              --arg reason "$REASON" --arg compiler "$COMPILER" \
+              '. + [$r + (if $reason == "" then {} else {reason: $reason} end)
+                      + (if $compiler == "" then {} else {compiler: $compiler} end)]' \
               results.json > results.next && mv results.next results.json
           done
           RESULTS=$(cat results.json)
