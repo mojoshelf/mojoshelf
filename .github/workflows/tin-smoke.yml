@@ -119,14 +119,16 @@ jobs:
           # Every page: a full run has ~230 jobs and the API caps a page at
           # 100, so reading one page silently reported fewer than half the
           # tins and left the rest showing whatever an older run said.
+          # Pages are merged as files: a page of job objects is larger than
+          # Linux's argument limit, so passing one to jq --argjson fails.
           echo "[]" > jobs.json
           PAGE=1
           while :; do
-            CHUNK=$(curl -sf -H "Authorization: Bearer $GH_TOKEN" \
-              "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100&page=$PAGE" \
-              | jq -c '.jobs')
-            jq -c --argjson c "$CHUNK" '. + $c' jobs.json > jobs.next && mv jobs.next jobs.json
-            [ "$(echo "$CHUNK" | jq length)" -lt 100 ] && break
+            curl -sf -H "Authorization: Bearer $GH_TOKEN" -o page.json \
+              "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100&page=$PAGE"
+            N=$(jq '.jobs | length' page.json)
+            jq -c -s '.[0] + .[1].jobs' jobs.json page.json > jobs.next && mv jobs.next jobs.json
+            [ "$N" -lt 100 ] && break
             PAGE=$((PAGE + 1))
           done
           echo "jobs read: $(jq length jobs.json)"
@@ -183,6 +185,12 @@ jobs:
           done
           RESULTS=$(cat results.json)
           echo "reporting: $RESULTS"
+          # An empty report means this step broke, not that nothing ran.
+          # Posting it would leave every tin on its old status and look fine.
+          if [ "$(jq length results.json)" -eq 0 ]; then
+            echo "::error::no smoke results to report; refusing to post an empty report"
+            exit 1
+          fi
           curl -sf -X POST "https://mojoshelf.org/api/verify" \
             -H "Authorization: Bearer $SHELF_TOKEN" \
             -H "Content-Type: application/json" \
