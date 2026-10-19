@@ -63,7 +63,11 @@ jobs:
     steps:
       - name: Install pixi and the shelf extension
         run: |
-          export PIXI_VERSION=v0.71.1
+          # 0.78 is the floor for Mojo 1.1.0: older pixi negotiates a
+          # pixi-build-mojo that writes .mojopkg, which 1.1.0's
+          # `mojo precompile` refuses, so every 1.1.0 tin failed here with
+          # "Script failed to execute". 1.0.0 tins build fine on 0.78 too.
+          export PIXI_VERSION=v0.78.0
           curl -fsSL https://pixi.sh/install.sh | bash
           echo "$HOME/.pixi/bin" >> "$GITHUB_PATH"
           "$HOME/.pixi/bin/pixi" global install --channel https://mojoshelf.org/channel mojoshelf
