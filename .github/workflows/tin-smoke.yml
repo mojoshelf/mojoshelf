@@ -121,15 +121,27 @@ jobs:
           # tins and left the rest showing whatever an older run said.
           # Pages are merged as files: a page of job objects is larger than
           # Linux's argument limit, so passing one to jq --argjson fails.
-          echo "[]" > jobs.json
-          PAGE=1
-          while :; do
-            curl -sf -H "Authorization: Bearer $GH_TOKEN" -o page.json \
-              "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100&page=$PAGE"
-            N=$(jq '.jobs | length' page.json)
-            jq -c -s '.[0] + .[1].jobs' jobs.json page.json > jobs.next && mv jobs.next jobs.json
-            [ "$N" -lt 100 ] && break
-            PAGE=$((PAGE + 1))
+          read_jobs() {
+            echo "[]" > jobs.json
+            PAGE=1
+            while :; do
+              curl -sf -H "Authorization: Bearer $GH_TOKEN" -o page.json \
+                "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100&page=$PAGE"
+              N=$(jq '.jobs | length' page.json)
+              jq -c -s '.[0] + .[1].jobs' jobs.json page.json > jobs.next && mv jobs.next jobs.json
+              [ "$N" -lt 100 ] && break
+              PAGE=$((PAGE + 1))
+            done
+          }
+          # The jobs API can lag the run: a smoke job that has finished may
+          # still read as unconcluded when this starts, and was then reported
+          # as a failure with no reason. Re-read until every one has settled.
+          for TRY in $(seq 1 20); do
+            read_jobs
+            PENDING=$(jq '[.[] | select(.name | startswith("smoke (")) | select(.status != "completed" or .conclusion == null)] | length' jobs.json)
+            [ "$PENDING" -eq 0 ] && break
+            echo "$PENDING smoke jobs not settled yet; re-reading in 15s"
+            sleep 15
           done
           echo "jobs read: $(jq length jobs.json)"
           # Carries fail_job (one failed job per group, whose log supplies the
