@@ -113,7 +113,7 @@ fn main() {
         Cmd::Remove { name } => remove(&reg, &name),
         Cmd::Update { name } if pixi_mode => pixi::update(&reg, name.as_deref()),
         Cmd::Update { name } => update(&reg, name.as_deref()),
-        Cmd::List if pixi_mode => pixi::list(),
+        Cmd::List if pixi_mode => pixi::list(&reg),
         Cmd::List => list(&reg),
         Cmd::Search { term } => search(&reg, term.as_deref().unwrap_or("")),
         Cmd::Info { name } => info(&reg, &name),
@@ -291,7 +291,7 @@ fn merge_resolved(sets: Vec<Vec<ResolvedTin>>) -> Result<Vec<ResolvedTin>> {
     Ok(set)
 }
 
-fn short_sha(sha: &str) -> &str {
+pub(crate) fn short_sha(sha: &str) -> &str {
     sha.get(..12).unwrap_or(sha)
 }
 
