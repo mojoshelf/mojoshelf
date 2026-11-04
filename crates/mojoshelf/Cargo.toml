@@ -24,3 +24,4 @@ anyhow = "1"
 clap = { version = "4", features = ["derive", "env"] }
 toml = "1"
 ureq = { version = "3", features = ["json"] }
+toml_edit = "0.25.18"

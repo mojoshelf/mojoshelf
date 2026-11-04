@@ -132,9 +132,19 @@ Removes the tin's submodule. Warns if another installed tin depends on it.
 Re-pins the named tin (or all installed tins) to its latest published
 version, adding any new transitive dependencies.
 
+In pixi mode the whole closure is written into pixi.toml's `[dependencies]`
+in one edit, entries changed in place, and solved once with `pixi install`.
+Solving after each tin would see two revs of a shared dependency half-way
+through, and a shim subpackage that kept its name, version and build across
+revs becomes two identical source records. If the solve fails, pixi.toml and
+pixi.lock are put back as they were. `pixi shelf add` works the same way but
+keeps the rev of a tin already in pixi.toml.
+
 ### shelf list
 
-Lists installed tins with their pinned versions.
+Lists installed tins with their pinned versions, and the newer version when
+the registry has one. In pixi mode these are the registry tins in pixi.toml's
+`[dependencies]`.
 
 ### shelf search [term]
 
