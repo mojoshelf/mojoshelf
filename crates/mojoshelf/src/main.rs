@@ -601,7 +601,7 @@ fn publish(reg: &Registry) -> Result<()> {
     // in shelf.toml has to repeat it.
     let subdirectory = git::repo_prefix(&cwd)?;
     warn_if_not_pixi_consumable(&manifest);
-    reg.publish(&PublishRequest {
+    let warnings = reg.publish(&PublishRequest {
         name: manifest.name.clone(),
         version: manifest.version.clone(),
         commit_sha: commit_sha.clone(),
@@ -611,6 +611,9 @@ fn publish(reg: &Registry) -> Result<()> {
         dependencies: manifest.tins,
         subdirectory: subdirectory.clone(),
     })?;
+    for w in &warnings {
+        eprintln!("warning: {w}");
+    }
     match &subdirectory {
         Some(dir) => println!(
             "published {} {} ({}) from {}/",

@@ -163,5 +163,14 @@ Run from a tin's repo root. Reads `name`, `version`, and dependencies from
 publish of a new name registers the tin, owned by the publishing author;
 later publishes require the same owner. Fails if the working tree is dirty,
 if HEAD is not pushed, or if the version already exists for the tin.
-Authenticates with the author's publish token (`SHELF_TOKEN`), obtained on
+The registry also reads the tin's pixi manifest at the published commit and
+refuses a version that declares a dependency by a path outside the repository,
+or that pins a registered tin by git `rev` at a commit the registry has never
+published for it (a consumer's solve would see two source records for that
+tin). A `rev` is matched as a full sha or a unique prefix of at least 7 hex
+characters, since pixi passes it to git; dependencies on the tin's own
+repository are skipped. A pin on a published commit that isn't the tin's
+latest version is accepted, and the registry answers with a `warnings` list
+(`{"ok": true, "warnings": [...]}`) that `shelf publish` prints to stderr;
+older CLIs ignore the field. Authenticates with the author's publish token (`SHELF_TOKEN`), obtained on
 the website's Authors tab after GitHub sign-in.

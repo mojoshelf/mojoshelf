@@ -69,7 +69,9 @@ impl Registry {
         Self::parse(self.agent.get(&url).call()?)
     }
 
-    pub fn publish(&self, req: &PublishRequest) -> Result<()> {
+    /// Returns the registry's warnings about the published version, if any; a
+    /// registry that predates them sends none.
+    pub fn publish(&self, req: &PublishRequest) -> Result<Vec<String>> {
         let token = std::env::var("SHELF_TOKEN").map_err(|_| {
             anyhow!(
                 "SHELF_TOKEN is not set; sign in at {}/authors to get one",
@@ -82,8 +84,12 @@ impl Registry {
             .post(&url)
             .header("Authorization", &format!("Bearer {token}"))
             .send_json(req)?;
-        let _: serde_json::Value = Self::parse(res)?;
-        Ok(())
+        #[derive(serde::Deserialize)]
+        struct Published {
+            #[serde(default)]
+            warnings: Vec<String>,
+        }
+        Ok(Self::parse::<Published>(res)?.warnings)
     }
 }
 

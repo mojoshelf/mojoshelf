@@ -65,6 +65,12 @@ It also refuses a version whose manifest declares a dependency by a path
 outside the repository (`{ path = "../sibling" }`), because that resolves in
 your checkout and nobody else's.
 
+It also refuses a version that pins another registered tin at a commit the
+registry never published for it (`deflate-mojo = { git = "...", rev = ".." }`),
+because a consumer's solve then sees two source records for that tin. Pin the
+commit `shelf info <tin>` lists for its latest version. A pin on an older
+published version is accepted with a warning.
+
 ## One repo, more than one tin
 
 A repository can publish several tins — useful when an optional half of a
