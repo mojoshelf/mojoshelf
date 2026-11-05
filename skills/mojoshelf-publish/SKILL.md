@@ -149,7 +149,22 @@ consumer's solve sees two source records for one package and fails with
 means a release of every tin that pins it, only to move the pin, and of
 everything that pins those, published bottom-up.
 
-The steps today, by hand:
+With shelf 0.6 or later, two commands do it, run from a directory holding
+the repositories side by side:
+
+```sh
+shelf release plan deflate-mojo        # the cascade, versions, every pin that moves
+shelf release apply deflate-mojo       # branches, preflight, PRs (gh)
+shelf release apply --resume --merge   # once green: merge and publish, parents first
+```
+
+`apply` cuts every release branch at once, each pinning its parents' release
+heads, builds them together before opening any PR, and keeps its progress in
+`.shelf-release.json`. A fix pushed to a parent's release branch is picked up
+by `apply --resume`, which re-pins only what's below it. `shelf release --help`
+has the rest (`--changed`, `--bump`, `--without`, `--waves`, `--test`).
+
+With an older CLI, or to do it by hand:
 
 1. **Find the cascade.** `shelf info <tin>` lists its dependents
    (`curl -s https://mojoshelf.org/api/tins/<tin>` has them as
@@ -182,10 +197,8 @@ Mistakes to avoid:
 - Publishing a level before the one below it is published, or two tins in
   one repo at different commits (see "One repo, more than one tin").
 
-`shelf release plan` and `shelf release apply` are proposed in
-[specs/03_release.md](../../specs/03_release.md) to do all of this, with every
-release in a cascade prepared and tested at once. They are not in the CLI
-yet; until they are, follow the steps above.
+The design behind `shelf release` is in
+[specs/03_release.md](../../specs/03_release.md).
 
 ## Typical flow
 

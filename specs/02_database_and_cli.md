@@ -174,3 +174,50 @@ latest version is accepted, and the registry answers with a `warnings` list
 (`{"ok": true, "warnings": [...]}`) that `shelf publish` prints to stderr;
 older CLIs ignore the field. Authenticates with the author's publish token (`SHELF_TOKEN`), obtained on
 the website's Authors tab after GitHub sign-in.
+
+### shelf release plan <tin>... | --changed
+
+Run from a directory holding the tins' repositories side by side (each found
+by its git URL's last path segment, or `--repo name=path`). Works out the
+cascade a change to the named tins ripples up to: every tin whose manifest
+pins one in it by `rev`, in any dependency table, recursively, from the
+registry's dependents; tins published from a subdirectory go with their
+repository's root. Prints, parents first, each repository's release branch,
+each tin's current → next version (patch for a pin-only release; for a named
+tin `--bump name=patch|minor|major`, or minor/major from `### Breaking` or
+`### Removed` under its CHANGELOG's `Unreleased`), and every pin that moves,
+in manifests and in CI workflows that pin the old commit exactly. Reads each
+repository at its fetched default branch; changes nothing.
+
+- `--changed` — every tin checked out here with non-release commits since its
+  published commit (merges and subjects starting `Release` don't count).
+- `--without <tin>` — leave a tin out; its dependents keep its published pin.
+- `--json` — the plan for scripts, and the input of `apply --from`.
+
+### shelf release apply
+
+Takes the same arguments as `plan` (or `--from <plan.json>`) and carries the
+plan out: a branch `release/<tin>-<version>` per repository from its
+up-to-date default branch, parents first, with the versions, the changelog,
+every pin set to its parent's release-branch head, and `pixi lock`; committed
+and pushed. Then a preflight (one scratch pixi project adding every release
+head, solved and built; `--test` also runs each tin's `test` task), then one
+PR per branch via `gh`, labelled `release` and linking the others (without
+`gh` or GitHub remotes, it prints the branches). Progress is kept in
+`.shelf-release.json`.
+
+- `--resume` — carry on: a release branch that moved (a fix pushed to it) has
+  every tin below it re-pinned and relocked with a new commit, and preflight
+  rerun for them.
+- `--wait` — poll the PRs' checks until they pass, or stop at a failure.
+- `--merge` — when every PR is green and every pin is its parent's current
+  release head, merge (merge commits, parents first, each checked up to date
+  with its base) and publish.
+- `--publish` — publish the releases whose branches were merged by hand.
+- `--waves` — one level of the graph at a time, each published before the
+  next is cut.
+- `--skip-preflight`, `--consumer <path>` (print `pixi shelf update` for an app
+  afterwards).
+
+Publishing is `shelf publish` from a detached checkout of each release head,
+then a check that the registry shows the version at that commit.
