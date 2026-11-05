@@ -1,6 +1,6 @@
 ---
 name: mojoshelf-publish
-description: Publish a Mojo library ("tin") to the mojoshelf registry (mojoshelf.org) with shelf publish. Use when the user wants to publish, release, or version a Mojo library on mojoshelf, or needs a shelf.toml manifest created or updated.
+description: Publish a Mojo library ("tin") to the mojoshelf registry (mojoshelf.org) with shelf publish. Use when the user wants to publish, release, or version a Mojo library on mojoshelf, release several tins that depend on each other, or needs a shelf.toml manifest created or updated.
 license: MIT
 compatibility: Requires git and the shelf CLI (Rust); publishing needs a SHELF_TOKEN
 metadata:
@@ -125,6 +125,61 @@ in the publisher. Check what the registry actually stored:
 ```sh
 curl -s https://mojoshelf.org/api/tins/<name> | grep -o '"subdirectory":[^,]*'
 ```
+
+## Releasing tins that pin each other
+
+A tin that another tin builds against is usually pinned by revision in the
+consumer's package manifest:
+
+```toml
+[package.host-dependencies]
+deflate-mojo = { git = "https://github.com/magmalake/deflate.mojo", rev = "6639b18…" }
+```
+
+That `rev` must be **the commit the registry published** for the
+dependency's version. Any other commit, even one with the same code, and a
+consumer's solve sees two source records for one package and fails with
+`encountered duplicate records for …_source.conda`. So a release of one tin
+means a release of every tin that pins it, only to move the pin, and of
+everything that pins those, published bottom-up.
+
+The steps today, by hand:
+
+1. **Find the cascade.** `shelf info <tin>` lists its dependents
+   (`curl -s https://mojoshelf.org/api/tins/<tin>` has them as
+   `dependents`). For each, look in its manifest for a `rev` pin to the tin, in
+   every table that can hold one: `[dependencies]`,
+   `[package.host-dependencies]`, `[package.run-dependencies]`,
+   `[package.build-dependencies]`, and feature- or target-specific ones. CI
+   workflows that check siblings out by commit pin them too. A dependent with
+   no `rev` pin needs no release. Repeat for each dependent that does.
+2. **Release from the bottom.** For the lowest tin: bump `version`, commit,
+   push, `shelf publish`. Then read back the commit it was published at:
+
+   ```sh
+   curl -s https://mojoshelf.org/api/tins/<tin> | grep -o '"commit_sha":"[0-9a-f]*"' | head -1
+   ```
+
+3. **Move the pins one level up** to exactly that commit, in every place the
+   consumer pins it, then `pixi lock`, bump its version, commit, push, publish,
+   and read back its commit. Repeat level by level.
+4. **Check each publish** with `shelf info <tin>`, and finish with
+   `pixi shelf update` in the apps that use the tins.
+
+Mistakes to avoid:
+
+- Pinning a dependency's branch head or merge commit instead of the commit
+  the registry recorded. Always read it back from the registry.
+- Leaving a pin behind in one table, or in CI. The build may still pass,
+  because a sibling's source on the include path hides the stale package, and
+  then a consumer's solve fails.
+- Publishing a level before the one below it is published, or two tins in
+  one repo at different commits (see "One repo, more than one tin").
+
+`shelf release plan` and `shelf release apply` are proposed in
+[specs/03_release.md](../../specs/03_release.md) to do all of this, with every
+release in a cascade prepared and tested at once. They are not in the CLI
+yet; until they are, follow the steps above.
 
 ## Typical flow
 
