@@ -165,6 +165,11 @@ Two ways out when a fix isn't coming soon:
 
 ### A pin check at publish time
 
+Status: implemented in the registry (`pin_check` in
+`crates/shelf-worker/src/manifest.rs`); `shelf publish` prints its warnings.
+There is no client-side copy, since the registry answers before it records
+anything. `scripts/pin-dryrun.sh` runs it over published manifests.
+
 `shelf publish` (and the registry, for publishes from older CLIs) reads the
 manifest at the commit being published and, for every dependency that pins a
 registered tin by `rev`, checks that the rev is a commit the registry has

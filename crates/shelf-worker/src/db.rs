@@ -107,6 +107,42 @@ pub async fn versions_of(d1: &D1Database, tin_id: i64) -> Result<Vec<VersionRow>
         .results::<VersionRow>()
 }
 
+/// Every source tin with all its published versions, for the publish-time pin
+/// check. Channel tins have no versions of their own and are left out.
+pub async fn published_source_tins(d1: &D1Database) -> Result<Vec<crate::manifest::Published>> {
+    #[derive(Deserialize)]
+    struct Row {
+        name: String,
+        url: String,
+        subdirectory: Option<String>,
+        version: String,
+        commit_sha: String,
+    }
+    let rows = d1
+        .prepare(
+            "SELECT b.name AS name, b.url AS url, b.subdirectory AS subdirectory, \
+             v.version AS version, v.commit_sha AS commit_sha \
+             FROM versions v JOIN tins b ON b.id = v.tin_id WHERE b.kind = 'source'",
+        )
+        .all()
+        .await
+        .at()?
+        .results::<Row>()?;
+    let mut tins: Vec<crate::manifest::Published> = Vec::new();
+    for r in rows {
+        match tins.iter_mut().find(|t| t.name == r.name) {
+            Some(t) => t.versions.push((r.version, r.commit_sha)),
+            None => tins.push(crate::manifest::Published {
+                name: r.name,
+                url: r.url,
+                subdirectory: r.subdirectory,
+                versions: vec![(r.version, r.commit_sha)],
+            }),
+        }
+    }
+    Ok(tins)
+}
+
 pub async fn dependency_names(d1: &D1Database, version_id: i64) -> Result<Vec<String>> {
     #[derive(Deserialize)]
     struct Row {

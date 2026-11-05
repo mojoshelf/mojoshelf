@@ -605,6 +605,7 @@ async fn api_publish(mut req: Request, ctx: RouteContext<()>) -> Result<Response
     // A tin whose manifest points at sibling checkouts builds for its author
     // and nobody else. Catch it here, where the fix is one edit away, rather
     // than days later through a red verification badge.
+    let mut warnings: Vec<String> = Vec::new();
     if let Some(text) = manifest::fetch(&body.url, &body.commit_sha, subdirectory.as_deref()).await
     {
         let depth = manifest::subdirectory_depth(subdirectory.as_deref());
@@ -627,6 +628,26 @@ async fn api_publish(mut req: Request, ctx: RouteContext<()>) -> Result<Response
                 400,
             );
         }
+        // A pin on a registered tin at a commit the registry never published
+        // gives consumers two source records for it, and a solve that fails.
+        let pins = manifest::pin_check(
+            &text,
+            &body.url,
+            &db::published_source_tins(&d1).await.at()?,
+        );
+        if !pins.refusals.is_empty() {
+            return error_json(
+                &format!(
+                    "this version pins other tins at commits the registry has \
+                     not published: {} Pin the latest published version \
+                     (`pixi shelf update` shows it), or publish the dependency \
+                     first.",
+                    pins.refusals.join(" ")
+                ),
+                400,
+            );
+        }
+        warnings = pins.warnings;
     }
 
     let description = body
@@ -708,7 +729,8 @@ async fn api_publish(mut req: Request, ctx: RouteContext<()>) -> Result<Response
     // this a tin published just after a sweep looks unverified for a week.
     // Best effort: the publish has already succeeded either way.
     smoke::request(&ctx.env, &d1, &body.name).await;
-    Ok(Response::from_json(&json!({ "ok": true }))?.with_status(201))
+    // `warnings` is additive: older CLIs read the body as opaque JSON.
+    Ok(Response::from_json(&json!({ "ok": true, "warnings": warnings }))?.with_status(201))
 }
 
 fn text_response(body: String, content_type: &str) -> Result<Response> {
