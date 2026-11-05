@@ -5,6 +5,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 pub fn git(dir: &Path, args: &[&str]) -> Result<String> {
+    Ok(git_raw(dir, args)?.trim().to_string())
+}
+
+/// `git`, with its output as it came: a file read with `git show` keeps its
+/// trailing newline.
+pub fn git_raw(dir: &Path, args: &[&str]) -> Result<String> {
     let out = Command::new("git")
         .args(args)
         .current_dir(dir)
@@ -17,7 +23,7 @@ pub fn git(dir: &Path, args: &[&str]) -> Result<String> {
             String::from_utf8_lossy(&out.stderr).trim()
         );
     }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 /// Root of the repository the user runs `shelf` inside.

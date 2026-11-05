@@ -235,6 +235,30 @@ pub fn is_full_sha(s: &str) -> bool {
     s.len() == 40 && s.chars().all(|c| c.is_ascii_hexdigit())
 }
 
+/// A repository URL reduced to `host/owner/repo`, so https, ssh, `git+` and
+/// `.git` spellings of one repository compare equal. Lower-cased throughout:
+/// the registry only holds GitHub repositories, where owner and repo names
+/// are case-insensitive too.
+pub fn normalize_url(url: &str) -> String {
+    let url = url.trim();
+    let url = url.strip_prefix("git+").unwrap_or(url);
+    let (host, path) = match url.split_once("://") {
+        Some((_, rest)) => {
+            let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
+            let host = authority.rsplit('@').next().unwrap_or(authority);
+            (host.split(':').next().unwrap_or(host), path)
+        }
+        // scp-style: git@github.com:owner/repo.git
+        None => match url.split_once(':') {
+            Some((user_host, path)) => (user_host.rsplit('@').next().unwrap_or(user_host), path),
+            None => (url, ""),
+        },
+    };
+    let path = path.trim_matches('/');
+    let path = path.strip_suffix(".git").unwrap_or(path).trim_matches('/');
+    format!("{host}/{path}").to_ascii_lowercase()
+}
+
 /// How long a repo-swap warning stays visible after a tin's URL changes.
 pub const URL_CHANGE_WARN_DAYS: i64 = 30;
 

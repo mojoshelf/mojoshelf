@@ -1,6 +1,19 @@
 # Releasing several tins at once
 
-Status: proposal.
+Status: implemented in the CLI (`shelf release plan` and `apply`,
+`crates/mojoshelf/src/release/`), with these differences:
+
+- `--resume` handles a parent whose release branch moved; a default branch
+  that moved under a release branch isn't re-cut (that would need a force
+  push). `--merge` stops and asks for the base to be merged into the release
+  branch as a new commit, which `--resume` then treats as a moved head.
+- `--publish` publishes releases whose PRs were merged by hand; `--merge`
+  publishes after merging.
+- `--without` doesn't check that dependents build against the dropped tin's
+  published version; preflight does.
+- `--changed` counts non-merge commits whose subject doesn't start with
+  `Release`. Changelog fragments and consumer PRs (open questions below) are
+  not done.
 
 ## The problem
 

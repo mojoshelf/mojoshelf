@@ -110,7 +110,7 @@ fn pin_value(b: &ResolvedTin) -> Option<toml_edit::Value> {
 
 /// What writing the install set did to one entry.
 #[derive(Debug, PartialEq)]
-enum Change {
+pub(crate) enum Change {
     Added,
     /// Re-pinned; holds the previous rev when there was one.
     Repinned(Option<String>),
@@ -136,7 +136,11 @@ fn existing_pin(item: &toml_edit::Item) -> Option<(String, String, Option<String
 /// Entries are changed in place, so the order of the table and the comments
 /// around it survive. With `overwrite`, existing source pins move to the
 /// registry's rev; without it, they stay as they are.
-fn write_pins(text: &str, set: &[ResolvedTin], overwrite: bool) -> Result<(String, Vec<Change>)> {
+pub(crate) fn write_pins(
+    text: &str,
+    set: &[ResolvedTin],
+    overwrite: bool,
+) -> Result<(String, Vec<Change>)> {
     let mut doc: toml_edit::DocumentMut = text.parse().context("could not parse pixi.toml")?;
     let deps = doc
         .entry("dependencies")

@@ -2,6 +2,7 @@ mod git;
 mod graduate;
 mod pixi;
 mod registry;
+mod release;
 
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, Subcommand};
@@ -86,6 +87,12 @@ enum Cmd {
         #[arg(long, default_value = "community-recipe")]
         out: String,
     },
+    /// Release several tins that pin each other by git revision: plan the
+    /// cascade, then cut, test, merge and publish it parents first.
+    Release {
+        #[command(subcommand)]
+        cmd: release::ReleaseCmd,
+    },
 }
 
 /// True when running as the pixi extension (`pixi shelf …` dispatches to a
@@ -128,6 +135,7 @@ fn main() {
             license,
             out,
         } => graduate::run(maintainer.as_deref(), license.as_deref(), &out),
+        Cmd::Release { cmd } => release::run(&reg, cmd),
     };
     if let Err(e) = result {
         eprintln!("error: {e:#}");
@@ -212,7 +220,7 @@ fn split_spec(spec: &str) -> (&str, Option<&str>) {
     }
 }
 
-fn now_unix_secs() -> i64 {
+pub(crate) fn now_unix_secs() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
@@ -531,8 +539,8 @@ fn info(reg: &Registry, name: &str) -> Result<()> {
 /// A tin is pixi-consumable when its pixi.toml declares a [package] built
 /// by pixi-build-mojo. Warn (not fail) otherwise: FFI tins legitimately
 /// stay submodule-only until the backend supports their build steps.
-fn warn_if_not_pixi_consumable(manifest: &Manifest) {
-    let ok = std::fs::read_to_string("pixi.toml")
+fn warn_if_not_pixi_consumable(dir: &Path, manifest: &Manifest) {
+    let ok = std::fs::read_to_string(dir.join("pixi.toml"))
         .map(|text| text.contains("[package]") && text.contains("pixi-build-mojo"))
         .unwrap_or(false);
     if ok {
@@ -575,8 +583,14 @@ Then verify with `pixi build` before publishing."
 }
 
 fn publish(reg: &Registry) -> Result<()> {
-    let manifest_path = Path::new("shelf.toml");
-    let raw = std::fs::read_to_string(manifest_path).context(
+    publish_from(reg, &std::env::current_dir()?)
+}
+
+/// `shelf publish` run in `dir`. `shelf release apply` publishes through this
+/// too, from a detached checkout of each release head.
+pub(crate) fn publish_from(reg: &Registry, cwd: &Path) -> Result<()> {
+    let manifest_path = cwd.join("shelf.toml");
+    let raw = std::fs::read_to_string(&manifest_path).context(
         "no shelf.toml here; run publish from the directory holding the tin's \
          shelf.toml — the repo root, or the subdirectory of a repo that \
          publishes more than one tin",
@@ -585,22 +599,21 @@ fn publish(reg: &Registry) -> Result<()> {
     semver::Version::parse(&manifest.version)
         .with_context(|| format!("'{}' in shelf.toml is not valid semver", manifest.version))?;
 
-    let cwd = std::env::current_dir()?;
-    if !git::working_tree_clean(&cwd)? {
+    if !git::working_tree_clean(cwd)? {
         bail!("working tree is dirty; commit or stash before publishing");
     }
-    if !git::head_is_pushed(&cwd)? {
+    if !git::head_is_pushed(cwd)? {
         bail!("HEAD is not on any remote branch; push before publishing");
     }
-    let commit_sha = git::head_commit(&cwd)?;
-    let origin = git::git(&cwd, &["remote", "get-url", "origin"])
+    let commit_sha = git::head_commit(cwd)?;
+    let origin = git::git(cwd, &["remote", "get-url", "origin"])
         .context("no 'origin' remote; publishing needs a public repo URL")?;
     // A repo may publish more than one tin, each from its own directory —
     // parquet.mojo ships `parquet-mojo` from the root and `parquet-full-mojo`
     // from `full/`. Where the manifest sits is the whole declaration; nothing
     // in shelf.toml has to repeat it.
-    let subdirectory = git::repo_prefix(&cwd)?;
-    warn_if_not_pixi_consumable(&manifest);
+    let subdirectory = git::repo_prefix(cwd)?;
+    warn_if_not_pixi_consumable(cwd, &manifest);
     let warnings = reg.publish(&PublishRequest {
         name: manifest.name.clone(),
         version: manifest.version.clone(),
