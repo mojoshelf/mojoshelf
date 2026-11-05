@@ -90,16 +90,24 @@ their own pin moves, since they reach the root by `path = ".."`.
 
    Parents' branches are made first, so their heads are known before the
    children pin them. Nothing waits on anything else.
-2. **Pull requests.** With `gh` available, one PR per branch, labelled
+2. **Preflight**, before any PR: one scratch project that adds every release
+   head the way a consumer would (`pixi shelf add` of each, in one edit), solves
+   and builds. That's a minute or two, and it catches the failures a release
+   PR can have that aren't in the code: a wrong pin, two revisions of one tin,
+   a lock file that disagrees. With `--test`, it also runs each tin's own tests
+   against the others' release heads. If preflight fails, nothing is opened.
+3. **Pull requests.** With `gh` available, one PR per branch, labelled
    `release`, each body listing the whole cascade with links to its sibling
    PRs. Without `gh`, it prints the branches.
-3. **Wait** (optional, `--wait`): poll the PRs' required checks. If one fails,
+4. **Wait** (optional, `--wait`): poll the PRs' required checks. If one fails,
    stop and say which; nothing is merged or published.
-4. **Merge** (optional, `--merge`, needs `gh`): parents first, with merge
-   commits. Before each, check the branch is still up to date with its base;
+5. **Merge** (optional, `--merge`, needs `gh`): only when every PR in the
+   cascade is green **and** every pin in every release branch equals its
+   parent's current release head. Then parents first, with merge commits.
+   Before each, check the branch is still up to date with its base;
    if the base moved, stop and say so (rerun `apply`, which re-cuts that
    branch and its descendants).
-5. **Publish**, parents first: a detached checkout of each release branch's
+6. **Publish**, parents first: a detached checkout of each release branch's
    head commit (which its base now contains), then the same steps as
    `shelf publish`, and for a repository with a subdirectory tin, that too
    from the same commit. Then check the registry shows each version at that
@@ -116,6 +124,44 @@ the same tree when the branch was up to date (step 4 checks this). Repositories
 that squash or rebase on merge get a new commit with the same tree; `apply`
 checks the tree and publishes the head anyway, but says the published commit
 isn't on the default branch.
+
+### When a release PR fails
+
+A release's diff is versions, a changelog and pins, so a failing release PR is
+one of three things:
+
+- **The cascade itself is wrong** (a pin, a duplicate record, a lock file).
+  Preflight catches this before any PR is opened.
+- **A parent's change breaks a child**, for instance an API the child calls.
+  That child needs a code change, which isn't a release's job: it goes in a
+  PR of its own against the child's default branch, and the child's release
+  is cut again once it's merged. Preflight with `--test` finds most of these
+  too.
+- **A flaky check.** Rerunning it changes no commit, so nothing else moves.
+
+When a parent's release branch does have to change, the fix goes on that
+branch as a new commit (no force push), and `apply --resume`:
+
+1. notices the parent's head moved;
+2. for every tin below it in the cascade, and only those, adds a commit that
+   moves the pin to the new head, and relocks;
+3. reruns preflight for that subtree, and waits for those PRs' checks again.
+
+Tins outside the subtree keep their branches and their green checks. The cost
+of a failure is its fix plus one more round of CI for the tins below it.
+
+The merge rule (every pin equal to its parent's current head) is what makes
+this safe: a child tested against a parent commit that's since been replaced
+can't merge, so nothing is published against a commit that isn't.
+
+Two ways out when a fix isn't coming soon:
+
+- `shelf release plan --without <tin>` recomputes the cascade without it; its
+  dependents go back to pinning its latest published version. `plan` refuses
+  when a dependent needs the dropped tin's unreleased code (it fails to build
+  against the published one in preflight).
+- `--waves` releases one level of the graph at a time, publishing each before
+  cutting the next: today's serial order, for a cascade that keeps failing.
 
 ### A pin check at publish time
 
