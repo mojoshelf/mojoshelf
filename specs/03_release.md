@@ -11,6 +11,22 @@ Status: implemented in the CLI (`shelf release plan` and `apply`,
   publishes after merging.
 - `--without` doesn't check that dependents build against the dropped tin's
   published version; preflight does.
+- CI workflows are read too. A checkout of any repository released before a
+  dependent in the cascade (a parent, or a parent's parent) moves to that
+  repository's release head whatever commit it was at, found by the
+  repository it names: `actions/checkout` with `repository:` and `ref:` in
+  flow or block style, and `git clone <url>` followed by a git command
+  naming a commit (`git -C dir checkout <sha>`). Any other occurrence of a
+  parent's pinned or published commit still moves where it matches exactly.
+- Before `apply` cuts anything it checks transitive consistency: every tin
+  outside the cascade that a dependent pins or checks out by commit must be
+  at a commit one of its parents' `[package.*]` tables pins it at (the
+  release doesn't move those). `plan` lists each mismatch; `apply` refuses
+  them unless `--allow-mismatch`. This is what broke orca.mojo's main after
+  the parquet → iceberg → orca release (mojoshelf#34): orca's CI built
+  iceberg next to a parquet checkout at a commit iceberg wasn't built with.
+- There's no preflight of a dependent's CI sibling layout; preflight builds
+  the release heads as a consumer would.
 - `--changed` counts non-merge commits whose subject doesn't start with
   `Release`. Changelog fragments and consumer PRs (open questions below) are
   not done.
@@ -97,7 +113,8 @@ their own pin moves, since they reach the root by `path = ".."`.
    - `Unreleased` in `CHANGELOG.md`, if there is one, moved under the new
      version and today's date;
    - each pin to a tin in the cascade set to **the head commit of that tin's
-     release branch**, wherever the repository pins it;
+     release branch**, wherever the repository pins it, CI checkouts of it
+     included;
    - `pixi lock`, so the lock file agrees;
    - committed and pushed.
 

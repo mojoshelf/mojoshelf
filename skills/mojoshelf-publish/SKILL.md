@@ -161,8 +161,12 @@ shelf release apply --resume --merge   # once green: merge and publish, parents 
 `apply` cuts every release branch at once, each pinning its parents' release
 heads, builds them together before opening any PR, and keeps its progress in
 `.shelf-release.json`. A fix pushed to a parent's release branch is picked up
-by `apply --resume`, which re-pins only what's below it. `shelf release --help`
-has the rest (`--changed`, `--bump`, `--without`, `--waves`, `--test`).
+by `apply --resume`, which re-pins only what's below it. After 0.6.0, CI checkouts of any
+repository below a tin in the cascade move with its pins. `plan` also reports
+a sibling outside the cascade that a tin pins or checks out at another commit
+than its parents pin it at, and `apply` refuses that unless
+`--allow-mismatch`. `shelf release --help` has the rest (`--changed`,
+`--bump`, `--without`, `--waves`, `--test`).
 
 With an older CLI, or to do it by hand:
 

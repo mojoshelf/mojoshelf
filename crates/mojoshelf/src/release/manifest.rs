@@ -202,45 +202,334 @@ pub fn replace_sha(text: &str, old: &str, new: &str) -> String {
     out
 }
 
-/// Lines of a workflow that check out `slug` (`owner/name`) at a commit, for
-/// the plan's warnings about CI pins it leaves alone.
-pub fn workflow_checkouts(text: &str, slug: &str) -> Vec<(usize, String)> {
-    let slug = slug.to_lowercase();
-    let lines: Vec<&str> = text.lines().collect();
-    let mut found = Vec::new();
-    for (i, line) in lines.iter().enumerate() {
-        if !line.to_lowercase().contains(&format!("repository: {slug}")) {
-            continue;
+/// How a workflow names the commit of another repository it builds from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RefKind {
+    /// An `actions/checkout` step: `repository: owner/name` with
+    /// `ref: <sha>`, in flow style or as a block.
+    Checkout,
+    /// A `git clone <url>` followed by a git command naming a commit
+    /// (`git checkout <sha>`, `git -C dir checkout <sha>`, `git fetch origin
+    /// <sha>`), on the same line or the lines after it.
+    Clone,
+}
+
+impl RefKind {
+    pub fn describe(self) -> &'static str {
+        match self {
+            RefKind::Checkout => "checkout",
+            RefKind::Clone => "clone",
         }
-        // The ref sits on the same line in flow style, or within the next
-        // few lines of the `with:` block.
-        for near in lines.iter().skip(i).take(4) {
-            if let Some(sha) = first_sha(near) {
-                found.push((i + 1, sha));
-                break;
+    }
+}
+
+/// A commit of a named repository that a CI workflow checks out.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkflowRef {
+    /// The line the commit is on, from 1.
+    pub line: usize,
+    /// The repository, as [`repo_key`] has it.
+    pub repo: String,
+    pub rev: String,
+    pub kind: RefKind,
+    /// Where the commit starts in the text.
+    pub offset: usize,
+}
+
+/// Every commit a workflow checks another repository out at, by the
+/// repository it names. Only full 40-character commits count; a checkout of
+/// a branch or tag isn't a pin.
+pub fn workflow_refs(text: &str) -> Vec<WorkflowRef> {
+    let mut lines: Vec<(usize, &str)> = Vec::new();
+    let mut at = 0;
+    for l in text.split_inclusive('\n') {
+        lines.push((at, l.trim_end_matches(['\n', '\r'])));
+        at += l.len();
+    }
+    let mut found = Vec::new();
+    for (i, &(start, line)) in lines.iter().enumerate() {
+        for (_, slug) in yaml_values(line, "repository") {
+            if slug.contains('$') || !slug.contains('/') {
+                continue;
+            }
+            let repo = repo_key(&format!("https://github.com/{slug}"));
+            // The key's column, when it's a block mapping's key.
+            let t = line.trim_start();
+            let key_col = if t.starts_with("repository:") {
+                Some(indent(line))
+            } else if t.starts_with("- repository:") {
+                Some(indent(line) + 2)
+            } else {
+                None
+            };
+            let same_line = yaml_values(line, "ref").into_iter().next();
+            let found_ref = match (same_line, key_col) {
+                (Some((c, v)), _) => Some((start + c, v)),
+                (None, Some(col)) => block_sibling(&lines, i, col, "ref"),
+                (None, None) => None,
+            };
+            if let Some((offset, rev)) = found_ref {
+                if shelf_core::is_full_sha(&rev) {
+                    found.push(WorkflowRef {
+                        line: text[..offset].matches('\n').count() + 1,
+                        repo: repo.clone(),
+                        rev,
+                        kind: RefKind::Checkout,
+                        offset,
+                    });
+                }
             }
         }
+        for (p, _) in line.match_indices("git clone") {
+            clone_refs(&lines, i, p, &mut found);
+        }
+    }
+    found.sort_by_key(|r| r.offset);
+    found.dedup_by_key(|r| r.offset);
+    for r in &mut found {
+        r.line = text[..r.offset].matches('\n').count() + 1;
     }
     found
 }
 
-fn first_sha(line: &str) -> Option<String> {
+/// Move every commit [`workflow_refs`] finds whose repository `new_rev`
+/// returns a commit for. Returns the new text and what moved (with the old
+/// commits).
+pub fn repoint_refs(
+    text: &str,
+    new_rev: impl Fn(&str) -> Option<String>,
+) -> (String, Vec<(WorkflowRef, String)>) {
+    let mut out = String::with_capacity(text.len());
+    let mut moved = Vec::new();
+    let mut last = 0;
+    for r in workflow_refs(text) {
+        let Some(new) = new_rev(&r.repo) else {
+            continue;
+        };
+        if new == r.rev {
+            continue;
+        }
+        out.push_str(&text[last..r.offset]);
+        out.push_str(&new);
+        last = r.offset + r.rev.len();
+        moved.push((r, new));
+    }
+    out.push_str(&text[last..]);
+    (out, moved)
+}
+
+/// The values of a YAML key on one line, flow style (`{a: 1, key: v}`) or
+/// block (`key: v`, `- key: v`), each with the byte column it starts at.
+/// Quotes around a value are dropped.
+fn yaml_values(line: &str, key: &str) -> Vec<(usize, String)> {
+    let pat = format!("{key}:");
     let bytes = line.as_bytes();
+    let code = match line.find(" #") {
+        Some(c) => &line[..c],
+        None if line.trim_start().starts_with('#') => "",
+        None => line,
+    };
+    let mut out = Vec::new();
+    for (i, _) in code.match_indices(&pat) {
+        // `foo-key:` and `key:x` aren't this key.
+        if i > 0 && !matches!(bytes[i - 1], b' ' | b'\t' | b'{' | b',') {
+            continue;
+        }
+        let mut j = i + pat.len();
+        if j < bytes.len() && !matches!(bytes[j], b' ' | b'\t') {
+            continue;
+        }
+        while j < bytes.len() && matches!(bytes[j], b' ' | b'\t') {
+            j += 1;
+        }
+        let quote = bytes.get(j).copied().filter(|b| matches!(b, b'"' | b'\''));
+        if quote.is_some() {
+            j += 1;
+        }
+        let end = (j..bytes.len())
+            .find(|&k| match quote {
+                Some(q) => bytes[k] == q,
+                None => matches!(bytes[k], b',' | b'}' | b' ' | b'\t' | b'#'),
+            })
+            .unwrap_or(bytes.len());
+        if end > j {
+            out.push((j, line[j..end].to_string()));
+        }
+    }
+    out
+}
+
+fn indent(line: &str) -> usize {
+    line.len() - line.trim_start().len()
+}
+
+/// `key`'s value in the block mapping that the key at column `col` of line
+/// `at` is in: the lines around it at that indentation, as far as a less
+/// indented line (or the start of another list item). With the value's
+/// offset in the whole text.
+fn block_sibling(
+    lines: &[(usize, &str)],
+    at: usize,
+    col: usize,
+    key: &str,
+) -> Option<(usize, String)> {
+    let pat = format!("{key}:");
+    let value = |&(start, line): &(usize, &str), ind: usize| {
+        yaml_values(line, key)
+            .into_iter()
+            .find(|(c, _)| *c > ind)
+            .map(|(c, v)| (start + c, v))
+    };
+    for l in &lines[at + 1..] {
+        let t = l.1.trim_start();
+        if t.is_empty() || t.starts_with('#') {
+            continue;
+        }
+        let ind = indent(l.1);
+        if ind < col || (ind == col && t.starts_with("- ")) {
+            break;
+        }
+        if ind == col && t.starts_with(&pat) {
+            return value(l, ind);
+        }
+    }
+    // Above, unless the key opens its list item (`- repository: …`).
+    let here = lines[at].1;
+    if indent(here) + 2 == col && here.trim_start().starts_with("- ") {
+        return None;
+    }
+    for l in lines[..at].iter().rev() {
+        let t = l.1.trim_start();
+        if t.is_empty() || t.starts_with('#') {
+            continue;
+        }
+        let ind = indent(l.1);
+        if ind + 2 == col && t.starts_with("- ") {
+            // The item's first key, `- ref: …`, is a sibling too.
+            return t[2..].starts_with(&pat).then(|| value(l, ind)).flatten();
+        }
+        if ind < col {
+            break;
+        }
+        if ind == col && t.starts_with(&pat) {
+            return value(l, ind);
+        }
+    }
+    None
+}
+
+/// After a `git clone` at byte `col` of line `at`: the commits named by git
+/// commands that follow it, to the end of that run block or the next clone.
+fn clone_refs(lines: &[(usize, &str)], at: usize, col: usize, found: &mut Vec<WorkflowRef>) {
+    let (start, line) = lines[at];
+    let rest = &line[col..];
+    let seg_end = rest[1..]
+        .find("git clone")
+        .map(|e| e + 1)
+        .unwrap_or(rest.len());
+    let seg = &rest[..seg_end];
+    let cmd_end = command_ends(seg).first().copied().unwrap_or(seg.len());
+    let Some(url) = seg[..cmd_end]
+        .split_whitespace()
+        .map(|t| t.trim_matches(['"', '\'']))
+        .find(|t| t.contains("://") || t.starts_with("git@"))
+    else {
+        return;
+    };
+    if url.contains('$') {
+        return;
+    }
+    let repo = repo_key(url);
+    let mut push = |offset: usize, text: &str| {
+        for (i, sha) in git_shas(text) {
+            found.push(WorkflowRef {
+                line: 0,
+                repo: repo.clone(),
+                rev: sha,
+                kind: RefKind::Clone,
+                offset: offset + i,
+            });
+        }
+    };
+    push(start + col + cmd_end, &seg[cmd_end..]);
+    if seg_end < rest.len() {
+        return;
+    }
+    let base = indent(line);
+    for &(s, l) in lines.iter().skip(at + 1).take(12) {
+        let t = l.trim_start();
+        if t.is_empty() {
+            continue;
+        }
+        if indent(l) < base || t.starts_with("- ") || l.contains("git clone") {
+            break;
+        }
+        push(s, l);
+    }
+}
+
+/// Where the shell commands of a line end: `&&`, `||`, `;`, `|`.
+fn command_ends(text: &str) -> Vec<usize> {
+    let b = text.as_bytes();
+    let mut out = Vec::new();
     let mut i = 0;
-    while i < bytes.len() {
-        if is_hex(bytes[i]) && (i == 0 || !is_hex(bytes[i - 1])) {
-            let end = (i..bytes.len())
-                .find(|&j| !is_hex(bytes[j]))
-                .unwrap_or(bytes.len());
+    while i < b.len() {
+        match b[i] {
+            b';' => out.push(i),
+            b'&' | b'|' => {
+                out.push(i);
+                if i + 1 < b.len() && b[i + 1] == b[i] {
+                    i += 1;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Full commits named by the git commands in a piece of shell, with their
+/// offsets.
+fn git_shas(text: &str) -> Vec<(usize, String)> {
+    let mut out = Vec::new();
+    let mut from = 0;
+    let mut ends = command_ends(text);
+    ends.push(text.len());
+    for end in ends {
+        let cmd = &text[from..end];
+        let lead = cmd.len()
+            - cmd
+                .trim_start_matches([' ', '\t', '(', '&', '|', ';'])
+                .len();
+        if cmd[lead..].starts_with("git ") {
+            for i in sha_runs(cmd) {
+                out.push((from + i, cmd[i..i + 40].to_string()));
+            }
+        }
+        from = end;
+    }
+    out
+}
+
+/// Offsets of the 40-character hex runs in `text`.
+fn sha_runs(text: &str) -> Vec<usize> {
+    let b = text.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        if is_hex(b[i]) {
+            let end = (i..b.len()).find(|&j| !is_hex(b[j])).unwrap_or(b.len());
             if end - i == 40 {
-                return Some(line[i..end].to_string());
+                out.push(i);
             }
             i = end;
         } else {
             i += 1;
         }
     }
-    None
+    out
 }
 
 // ── CHANGELOG.md ─────────────────────────────────────────────────────────────
@@ -462,10 +751,111 @@ test = "mojo run tests"
             out.contains(&format!("{OLD}ff")),
             "a longer hex run is not a pin"
         );
-        assert_eq!(
-            workflow_checkouts(&wf, "Magmalake/deflate.mojo"),
-            vec![(4, OLD.to_string()), (7, OLD.to_string())]
+        let found = workflow_refs(&wf);
+        let refs: Vec<(usize, &str)> = found.iter().map(|r| (r.line, r.repo.as_str())).collect();
+        let deflate = "github.com/magmalake/deflate.mojo";
+        assert_eq!(refs, vec![(5, deflate), (7, deflate)]);
+    }
+
+    /// The forms a CI workflow checks a sibling out at a commit in, with an
+    /// unrelated commit each: what `workflow_refs` must find by repository.
+    fn checkouts() -> String {
+        let (a, b, c, d, e, f) = (
+            "a".repeat(40),
+            "b".repeat(40),
+            "c".repeat(40),
+            "d".repeat(40),
+            "e".repeat(40),
+            "f".repeat(40),
         );
+        format!(
+            r#"jobs:
+  data:
+    steps:
+      - uses: actions/checkout@v4
+        with: {{repository: magmalake/parquet.mojo, ref: {a}, path: parquet.mojo}}
+      - uses: actions/checkout@v4
+        with:
+          repository: Magmalake/Iceberg.mojo
+          # pinned by hand
+          ref: "{b}"
+          path: iceberg.mojo
+      - uses: actions/checkout@v4
+        with:
+          path: thrift.mojo
+          ref: {c}
+          repository: magmalake/thrift.mojo
+      - uses: actions/checkout@v4
+        with:
+          repository: magmalake/avro.mojo
+          ref: main
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{{{ github.repository }}}}
+          ref: {f}
+      - run: |
+          git clone --depth 50 https://github.com/magmalake/deflate.mojo.git deflate
+          git -C deflate checkout --quiet {d}
+          echo {e}
+      - run: git clone https://github.com/magmalake/lz4.mojo lz4 && (cd lz4 && git checkout {e}) && git clone https://github.com/magmalake/zstd.mojo
+      - uses: actions/checkout@v4
+        with:
+          repository: magmalake/roaring.mojo
+      - uses: actions/checkout@v4
+        with:
+          ref: {f}
+"#
+        )
+    }
+
+    #[test]
+    fn workflow_refs_find_checkouts_and_clones_by_repository() {
+        let wf = checkouts();
+        let refs = workflow_refs(&wf);
+        let found: Vec<(usize, &str, RefKind, char)> = refs
+            .iter()
+            .map(|r| {
+                (
+                    r.line,
+                    r.repo.strip_prefix("github.com/magmalake/").unwrap(),
+                    r.kind,
+                    r.rev.chars().next().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            found,
+            vec![
+                (5, "parquet.mojo", RefKind::Checkout, 'a'),
+                (10, "iceberg.mojo", RefKind::Checkout, 'b'),
+                (15, "thrift.mojo", RefKind::Checkout, 'c'),
+                (27, "deflate.mojo", RefKind::Clone, 'd'),
+                (29, "lz4.mojo", RefKind::Clone, 'e'),
+            ],
+            "a branch ref, an expression, a repository with no ref, a ref \
+             with no repository and an `echo` of a commit aren't pins"
+        );
+        for r in workflow_refs(&wf) {
+            assert_eq!(&wf[r.offset..r.offset + 40], r.rev);
+        }
+    }
+
+    #[test]
+    fn repoint_refs_moves_only_the_named_repositories() {
+        let wf = checkouts();
+        let (out, moved) = repoint_refs(&wf, |repo| match repo {
+            "github.com/magmalake/parquet.mojo" | "github.com/magmalake/deflate.mojo" => {
+                Some(NEW.to_string())
+            }
+            "github.com/magmalake/thrift.mojo" => Some("c".repeat(40)),
+            _ => None,
+        });
+        assert_eq!(moved.len(), 2, "thrift is already there");
+        let want = wf
+            .replacen(&"a".repeat(40), NEW, 1)
+            .replacen(&"d".repeat(40), NEW, 1);
+        assert_eq!(out, want);
+        assert!(repoint_refs(&out, |_| None).1.is_empty());
     }
 
     const CHANGELOG: &str = "# Changelog\n\nIntro.\n\n## [Unreleased]\n\n### Removed\n\n- `old_api`.\n\n## [0.2.0] - 2026-11-05\n\n### Added\n\n- Streaming.\n";

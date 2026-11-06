@@ -64,6 +64,10 @@ pub enum ReleaseCmd {
         /// is cut.
         #[arg(long)]
         waves: bool,
+        /// Release even when a dependent pins or checks out a tin outside the
+        /// cascade at another commit than its parents pin it at.
+        #[arg(long)]
+        allow_mismatch: bool,
         /// An app directory to remind about `pixi shelf update` afterwards.
         #[arg(long, value_name = "PATH")]
         consumer: Vec<String>,
@@ -124,6 +128,7 @@ pub fn run(reg: &Registry, cmd: ReleaseCmd) -> Result<()> {
             merge,
             publish,
             waves,
+            allow_mismatch,
             consumer,
         } => {
             let opts = apply::Opts {
@@ -133,6 +138,7 @@ pub fn run(reg: &Registry, cmd: ReleaseCmd) -> Result<()> {
                 merge,
                 publish,
                 waves,
+                allow_mismatch,
                 consumers: consumer,
             };
             let ws_root = cwd.clone();
