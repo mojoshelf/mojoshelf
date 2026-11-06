@@ -1,7 +1,7 @@
 //! `shelf release plan`: which tins a change ripples up to, in what order, at
 //! what versions, and every pin that moves.
 
-use super::manifest::{self, repo_key, Pin, WorkflowPin};
+use super::manifest::{self, repo_key, Pin, RefKind, WorkflowPin};
 use super::{Checkout, Workspace};
 use crate::registry::Registry;
 use anyhow::{anyhow, bail, Context, Result};
@@ -53,6 +53,15 @@ pub struct RepoRelease {
     pub pins: Vec<PinMove>,
     #[serde(default)]
     pub workflow_pins: Vec<WorkflowPinMove>,
+    /// CI checkouts of repositories below this one in the cascade, found by
+    /// the repository they name, at whatever commit.
+    #[serde(default)]
+    pub refs: Vec<RefMove>,
+    /// Commits of tins outside the cascade that this repository builds with
+    /// and a parent pins at another commit. `apply` refuses them unless
+    /// `--allow-mismatch`.
+    #[serde(default)]
+    pub mismatches: Vec<Mismatch>,
     #[serde(default)]
     pub warnings: Vec<String>,
 }
@@ -91,7 +100,76 @@ pub struct WorkflowPinMove {
     pub parent: String,
 }
 
+/// A CI workflow's checkout of a repository the cascade releases before this
+/// one (a parent, or a parent's parent, …): it moves to that repository's
+/// release head, whatever commit it was at.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RefMove {
+    pub file: String,
+    pub line: usize,
+    pub kind: RefKind,
+    /// The repo (a plan `repo` name) whose release head it moves to.
+    pub repo: String,
+    pub rev: String,
+}
+
+/// A tin outside the cascade that a repository pins or checks out at one
+/// commit while one of its parents pins it at another: after the release the
+/// repository would build that parent next to a sibling the parent wasn't
+/// built with.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Mismatch {
+    /// `file:line` of a workflow, or `file [table] dep` of a manifest pin.
+    pub at: String,
+    /// The tin's repository, by its checkout name.
+    pub tin: String,
+    pub rev: String,
+    /// The parent (a plan `repo` name) and the commits it pins the tin at.
+    pub parent: String,
+    pub parent_revs: Vec<String>,
+}
+
+impl Mismatch {
+    pub fn describe(&self) -> String {
+        let theirs: Vec<&str> = self
+            .parent_revs
+            .iter()
+            .map(|r| crate::short_sha(r))
+            .collect();
+        format!(
+            "{} has {} at {}, but {} pins it at {}",
+            self.at,
+            self.tin,
+            crate::short_sha(&self.rev),
+            self.parent,
+            theirs.join(", ")
+        )
+    }
+}
+
+/// Two revisions name the same commit: equal, or one a hex prefix (7 or more
+/// characters) of the other.
+fn same_commit(a: &str, b: &str) -> bool {
+    let (short, long) = if a.len() <= b.len() { (a, b) } else { (b, a) };
+    a == b
+        || (short.len() >= 7
+            && short.bytes().all(|c| c.is_ascii_hexdigit())
+            && long.starts_with(short))
+}
+
 impl Plan {
+    /// Every mismatch in the plan, described, with the repo it's in.
+    pub fn mismatches(&self) -> Vec<String> {
+        self.releases
+            .iter()
+            .flat_map(|r| {
+                r.mismatches
+                    .iter()
+                    .map(move |m| format!("{}: {}", r.repo, m.describe()))
+            })
+            .collect()
+    }
+
     pub fn get(&self, repo: &str) -> Option<&RepoRelease> {
         self.releases.iter().find(|r| r.repo == repo)
     }
@@ -511,6 +589,16 @@ pub fn make(ws: &Workspace, cat: &dyn Catalog, req: &Request) -> Result<Plan> {
         }
     }
     let ordered = order(&nodes, &edges)?;
+    // What each repo is released after: its parents, theirs, and so on.
+    let mut ancestors: HashMap<String, BTreeSet<String>> = HashMap::new();
+    for (key, _) in &ordered {
+        let mut below = BTreeSet::new();
+        for (_, p) in edges.iter().filter(|(c, _)| c == key) {
+            below.insert(p.clone());
+            below.extend(ancestors.get(p).cloned().unwrap_or_default());
+        }
+        ancestors.insert(key.clone(), below);
+    }
 
     // 3. and 4. Versions, pins and workflow pins, per repo.
     let mut releases: Vec<RepoRelease> = Vec::new();
@@ -548,12 +636,50 @@ pub fn make(ws: &Workspace, cat: &dyn Catalog, req: &Request) -> Result<Plan> {
             });
         }
 
+        let below = &ancestors[key];
         let mut workflow_pins = Vec::new();
+        let mut refs = Vec::new();
         let mut warnings = Vec::new();
+        // What this repo builds with from outside the cascade, for the
+        // consistency check: (where, repository, commit).
+        let mut outside: Vec<(String, String, String)> = Vec::new();
+        for (file, pin) in cx.pins_of(key)?.unwrap_or_default() {
+            let pk = repo_key(&pin.git);
+            if !nodes.contains(&pk) {
+                outside.push((format!("{file} [{}] {}", pin.table, pin.dep), pk, pin.rev));
+            }
+        }
         for file in c.workflows()? {
             let Some(text) = c.read(&file)? else { continue };
+            // Checkouts by repository: every one of a repo released before
+            // this one moves to its head, whatever commit it's at now.
+            for r in manifest::workflow_refs(&text) {
+                if r.repo == *key {
+                    continue;
+                }
+                if below.contains(&r.repo) {
+                    refs.push(RefMove {
+                        file: file.clone(),
+                        line: r.line,
+                        kind: r.kind,
+                        repo: cx.name_of(&r.repo),
+                        rev: r.rev,
+                    });
+                } else if nodes.contains(&r.repo) {
+                    warnings.push(format!(
+                        "{file}:{} checks out {} at {}, which this cascade releases but not \
+                         before {}; left as it is",
+                        r.line,
+                        cx.name_of(&r.repo),
+                        crate::short_sha(&r.rev),
+                        c.name()
+                    ));
+                } else {
+                    outside.push((format!("{file}:{}", r.line), r.repo, r.rev));
+                }
+            }
             for p in &parents {
-                // Conservative: only the commits this cascade knows are pins
+                // Any other mention of a commit this cascade knows is a pin
                 // of the parent, matched exactly.
                 let mut old: Vec<String> = published_at
                     .iter()
@@ -565,17 +691,6 @@ pub fn make(ws: &Workspace, cat: &dyn Catalog, req: &Request) -> Result<Plan> {
                 }
                 old.sort();
                 old.dedup();
-                if let Some(slug) = github_slug(&cx.repos[p].url) {
-                    for (line, sha) in manifest::workflow_checkouts(&text, &slug) {
-                        if !old.contains(&sha) {
-                            warnings.push(format!(
-                                "{file}:{line} checks out {slug} at {}, which is neither pinned nor \
-                                 published; left as it is",
-                                crate::short_sha(&sha)
-                            ));
-                        }
-                    }
-                }
                 workflow_pins.extend(manifest::workflow_pins(&file, &text, &old).into_iter().map(
                     |pin| WorkflowPinMove {
                         pin,
@@ -584,7 +699,43 @@ pub fn make(ws: &Workspace, cat: &dyn Catalog, req: &Request) -> Result<Plan> {
                 ));
             }
         }
+        workflow_pins.retain(|w| {
+            !refs
+                .iter()
+                .any(|m| m.file == w.pin.file && m.line == w.pin.line)
+        });
         workflow_pins.sort_by(|a, b| (&a.pin.file, a.pin.line).cmp(&(&b.pin.file, b.pin.line)));
+        refs.sort_by(|a, b| (&a.file, a.line).cmp(&(&b.file, b.line)));
+
+        // Transitive consistency: a tin outside the cascade that this repo
+        // builds with must be at the commit its parents' packages pin it at,
+        // which the release doesn't change.
+        let mut mismatches = Vec::new();
+        for p in &parents {
+            let mut theirs: BTreeMap<String, Vec<String>> = BTreeMap::new();
+            for (_, pin) in cx.pins_of(p)?.unwrap_or_default() {
+                if pin.table.starts_with("package.") {
+                    let revs = theirs.entry(repo_key(&pin.git)).or_default();
+                    if !revs.contains(&pin.rev) {
+                        revs.push(pin.rev);
+                    }
+                }
+            }
+            for (at, x, rev) in &outside {
+                let Some(revs) = theirs.get(x) else { continue };
+                if !revs.iter().any(|r| same_commit(r, rev)) {
+                    mismatches.push(Mismatch {
+                        at: at.clone(),
+                        tin: super::checkout_dir_name(
+                            cx.repos.get(x).map(|r| r.url.as_str()).unwrap_or(x),
+                        ),
+                        rev: rev.clone(),
+                        parent: cx.name_of(p),
+                        parent_revs: revs.clone(),
+                    });
+                }
+            }
+        }
 
         let mut tins = Vec::new();
         for t in &repo.tins {
@@ -678,6 +829,8 @@ pub fn make(ws: &Workspace, cat: &dyn Catalog, req: &Request) -> Result<Plan> {
             tins,
             pins,
             workflow_pins,
+            refs,
+            mismatches,
             warnings,
         });
     }
@@ -759,9 +912,31 @@ pub fn render(plan: &Plan) -> String {
                 head(&w.parent)
             ));
         }
+        for m in &r.refs {
+            out.push_str(&format!(
+                "    {}:{}  {} of {}  {} -> {}\n",
+                m.file,
+                m.line,
+                m.kind.describe(),
+                m.repo,
+                crate::short_sha(&m.rev),
+                head(&m.repo)
+            ));
+        }
+        for m in &r.mismatches {
+            out.push_str(&format!("    mismatch: {}\n", m.describe()));
+        }
         for w in &r.warnings {
             out.push_str(&format!("    warning: {w}\n"));
         }
+    }
+    let n = plan.mismatches().len();
+    if n > 0 {
+        out.push_str(&format!(
+            "\n{n} mismatch{}: a tin outside the cascade at another commit than a parent \
+             pins it at; `apply` refuses unless --allow-mismatch\n",
+            if n == 1 { "" } else { "es" }
+        ));
     }
     out
 }
@@ -877,6 +1052,16 @@ mod tests {
         );
         assert!(parse_bump("avro-mojo").is_err());
         assert!(parse_bump("avro-mojo=huge").is_err());
+    }
+
+    #[test]
+    fn same_commit_takes_a_prefix() {
+        let full = "4cf043712aa386c1ed2403771969fb3e4c79ea2d";
+        assert!(same_commit(full, full));
+        assert!(same_commit("4cf0437", full) && same_commit(full, "4cf0437"));
+        assert!(!same_commit("4cf04", full), "too short to be sure");
+        assert!(!same_commit("5cf0437", full));
+        assert!(!same_commit("main", "main-2"));
     }
 
     #[test]

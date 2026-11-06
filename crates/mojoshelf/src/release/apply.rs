@@ -24,6 +24,7 @@ pub struct Opts {
     pub merge: bool,
     pub publish: bool,
     pub waves: bool,
+    pub allow_mismatch: bool,
     pub consumers: Vec<String>,
 }
 
@@ -119,6 +120,22 @@ pub fn start(reg: &Registry, root: &Path, plan: Plan, opts: &Opts) -> Result<()>
     }
     if plan.releases.is_empty() {
         bail!("the plan has nothing to release");
+    }
+    let mismatches = plan.mismatches();
+    if !mismatches.is_empty() {
+        let list: Vec<String> = mismatches.iter().map(|m| format!("  {m}")).collect();
+        if !opts.allow_mismatch {
+            bail!(
+                "tins outside the cascade disagree with what a parent pins them at:\n{}\n\
+                 move them to the parent's commit (or put the tin in the cascade), or pass \
+                 --allow-mismatch to release anyway",
+                list.join("\n")
+            );
+        }
+        println!(
+            "releasing despite these mismatches (--allow-mismatch):\n{}",
+            list.join("\n")
+        );
     }
     for r in &plan.releases {
         if !git::working_tree_clean(&r.path)? {
@@ -299,6 +316,14 @@ fn sync(path: &Path, st: &mut State, group: &[String], resuming: bool) -> Result
         }
         let r = st.release(repo).clone();
         let heads = st.parent_heads(&r)?;
+        // CI checkouts by repository: parents' and their parents' heads.
+        let mut ref_heads = heads.clone();
+        for m in &r.refs {
+            let head = st
+                .head(&m.repo)
+                .ok_or_else(|| anyhow!("{}: {} has no release branch yet", r.repo, m.repo))?;
+            ref_heads.insert(repo_key(&st.release(&m.repo).url), head.to_string());
+        }
         // Workflows pin the old commits exactly; these are the ones to move.
         let mut old_revs: HashMap<String, Vec<String>> = HashMap::new();
         for p in &r.parents {
@@ -362,7 +387,7 @@ fn sync(path: &Path, st: &mut State, group: &[String], resuming: bool) -> Result
                     }
                     git::git(&r.path, &["checkout", "--quiet", "-b", &r.branch, &base])?;
                     let mut changed = release_edits(&st.plan, &r)?;
-                    changed.extend(pin_edits(&r, &heads, &old_revs)?);
+                    changed.extend(pin_edits(&r, &heads, &ref_heads, &old_revs)?);
                     let head = commit_and_push(&r, &changed, &release_message(&st.plan, &r))?;
                     println!("cut {} ({})", r.branch, crate::short_sha(&head));
                     st.of(repo).head = Some(head);
@@ -383,7 +408,7 @@ fn sync(path: &Path, st: &mut State, group: &[String], resuming: bool) -> Result
                 checkout_branch(&r)?;
             }
         }
-        let changed = pin_edits(&r, &heads, &old_revs)?;
+        let changed = pin_edits(&r, &heads, &ref_heads, &old_revs)?;
         if changed.is_empty() {
             continue;
         }
@@ -499,11 +524,13 @@ fn release_edits(plan: &Plan, r: &RepoRelease) -> Result<Vec<String>> {
     Ok(changed)
 }
 
-/// Pins (and the workflows that pin by commit) to each parent's head;
-/// relocks when a manifest changed. Returns the files changed.
+/// Pins (and the workflows that pin by commit) to each parent's head, and
+/// workflow checkouts of any repo below this one to its head; relocks when a
+/// manifest changed. Returns the files changed.
 fn pin_edits(
     r: &RepoRelease,
     heads: &HashMap<String, String>,
+    ref_heads: &HashMap<String, String>,
     old_revs: &HashMap<String, Vec<String>>,
 ) -> Result<Vec<String>> {
     let mut changed = Vec::new();
@@ -526,6 +553,7 @@ fn pin_edits(
                     }
                 }
             }
+            let (out, _) = manifest::repoint_refs(&out, |repo| ref_heads.get(repo).cloned());
             Ok(Some(out))
         })? {
             changed.push(file);
@@ -921,6 +949,21 @@ fn pr_body(st: &State, this: &RepoRelease) -> String {
             ));
         }
     }
+    if !this.refs.is_empty() {
+        body.push_str("\nCI checkouts moved here:\n\n");
+        for m in &this.refs {
+            body.push_str(&format!(
+                "- `{}:{}` {} of {}: `{}` -> `{}` ({})\n",
+                m.file,
+                m.line,
+                m.kind.describe(),
+                m.repo,
+                crate::short_sha(&m.rev),
+                crate::short_sha(st.head(&m.repo).unwrap_or("")),
+                st.release(&m.repo).branch
+            ));
+        }
+    }
     body.push_str(
         "\nMerge with `shelf release apply --resume --merge`: it merges (merge commits, parents first) \
          only when every PR is green and every pin is its parent's current release head, then \
@@ -1215,6 +1258,8 @@ mod tests {
             }],
             pins: vec![],
             workflow_pins: vec![],
+            refs: vec![],
+            mismatches: vec![],
             warnings: vec![],
         }
     }
