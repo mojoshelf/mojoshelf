@@ -767,6 +767,79 @@ fn apply_cuts_resumes_after_a_fix_and_publishes_parents_first() {
     assert!(out.contains("is finished"), "{out}");
 }
 
+/// mojoshelf#37: an apply that stopped after making the local release branch
+/// (and maybe its release commit), before pushing it or saving its head.
+fn interrupted_before_the_push(fx: &Fixture, commit_message: &str) {
+    let plan: Value =
+        serde_json::from_str(&fx.ok(&["release", "plan", "base1-mojo", "--json"])).unwrap();
+    let state = json!({"plan": plan, "repos": {"base1": {"merged": false}}});
+    std::fs::write(fx.ws.join(".shelf-release.json"), state.to_string()).unwrap();
+    let dir = fx.ws.join("base1");
+    git(
+        &dir,
+        &["checkout", "--quiet", "-b", "release/base1-mojo-0.2.0"],
+    );
+    std::fs::write(dir.join("NOTES"), "edit\n").unwrap();
+    git(&dir, &["add", "NOTES"]);
+    git(&dir, &["commit", "--quiet", "-m", commit_message]);
+    git(&dir, &["checkout", "--quiet", "main"]);
+}
+
+#[test]
+fn resume_recuts_a_local_release_branch_that_was_never_pushed() {
+    let fx = fixture();
+    interrupted_before_the_push(
+        &fx,
+        "Release base1-mojo 0.2.0\n\nMade by `shelf release apply`.",
+    );
+
+    let (ok, err) = fx.shelf(&["release", "apply", "base1-mojo", "--skip-preflight"]);
+    assert!(
+        !ok && err.contains("a release is under way here")
+            && err.contains("base1: release/base1-mojo-0.2.0: not cut yet")
+            && err.contains("`shelf release apply --resume` carries on from there"),
+        "{err}"
+    );
+
+    let out = fx.ok(&["release", "apply", "--resume", "--skip-preflight"]);
+    assert!(
+        out.contains("base1: cutting release/base1-mojo-0.2.0 again"),
+        "{out}"
+    );
+    let head = fx.remote_head("base1", "release/base1-mojo-0.2.0");
+    assert_eq!(head.len(), 40);
+    assert!(
+        fx.show("base1", "release/base1-mojo-0.2.0", "pixi.toml")
+            .contains("version = \"0.2.0\""),
+        "the release commit was made again"
+    );
+    let state: Value =
+        serde_json::from_str(&std::fs::read_to_string(fx.ws.join(".shelf-release.json")).unwrap())
+            .unwrap();
+    assert_eq!(state["repos"]["base1"]["head"], head);
+    assert_eq!(
+        state["repos"]["base1"]["cut_from"].as_str().unwrap().len(),
+        40,
+        "the cut is recorded before the commit"
+    );
+    assert_eq!(fx.remote_head("top", "release/top-mojo-2.1.1").len(), 40);
+}
+
+#[test]
+fn resume_keeps_a_local_release_branch_with_other_commits() {
+    let fx = fixture();
+    interrupted_before_the_push(&fx, "Someone's fix");
+    let (ok, err) = fx.shelf(&["release", "apply", "--resume", "--skip-preflight"]);
+    assert!(
+        !ok && err.contains("commits other than shelf's release commit")
+            && err.contains("Someone's fix"),
+        "{err}"
+    );
+    assert!(fx
+        .remote_head("base1", "release/base1-mojo-0.2.0")
+        .is_empty());
+}
+
 #[test]
 fn apply_with_no_tins_applies_the_saved_plan() {
     let fx = fixture();
