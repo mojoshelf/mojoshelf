@@ -131,6 +131,11 @@ their own pin moves, since they reach the root by `path = ".."`.
    PR can have that aren't in the code: a wrong pin, two revisions of one tin,
    a lock file that disagrees. With `--test`, it also runs each tin's own tests
    against the others' release heads. If preflight fails, nothing is opened.
+   pixi's build output (rattler-build's whole log for every source
+   dependency) goes to `preflight.log` in the scratch project; `apply` prints
+   one line per package as it's built (built or failed, with its time), and on
+   a failure the last 40 lines of the failed package's build, pixi's error and
+   the log's path. `--verbose` prints the whole output instead.
 3. **Pull requests.** With `gh` available, one PR per branch, labelled
    `release`, each body listing the whole cascade with links to its sibling
    PRs. Without `gh`, it prints the branches.

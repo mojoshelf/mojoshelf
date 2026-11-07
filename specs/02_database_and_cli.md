@@ -219,6 +219,8 @@ PR per branch via `gh`, labelled `release` and linking the others (without
   next is cut.
 - `--skip-preflight`, `--consumer <path>` (print `pixi shelf update` for an app
   afterwards).
+- `--verbose` — print preflight's whole build output; by default it goes to
+  a log file, with a line per package built and the end of a failed build.
 
 Publishing is `shelf publish` from a detached checkout of each release head,
 then a check that the registry shows the version at that commit.

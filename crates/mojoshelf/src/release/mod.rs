@@ -9,6 +9,7 @@
 //! be resumed.
 
 mod apply;
+mod buildlog;
 mod gh;
 pub mod manifest;
 pub mod plan;
@@ -71,6 +72,10 @@ pub enum ReleaseCmd {
         /// An app directory to remind about `pixi shelf update` afterwards.
         #[arg(long, value_name = "PATH")]
         consumer: Vec<String>,
+        /// Print preflight's whole build output (by default it goes to a log
+        /// file, with one line per package and the end of a failed build).
+        #[arg(long)]
+        verbose: bool,
     },
 }
 
@@ -130,6 +135,7 @@ pub fn run(reg: &Registry, cmd: ReleaseCmd) -> Result<()> {
             waves,
             allow_mismatch,
             consumer,
+            verbose,
         } => {
             let opts = apply::Opts {
                 test,
@@ -140,6 +146,7 @@ pub fn run(reg: &Registry, cmd: ReleaseCmd) -> Result<()> {
                 waves,
                 allow_mismatch,
                 consumers: consumer,
+                verbose,
             };
             let ws_root = cwd.clone();
             if resume {
