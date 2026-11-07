@@ -1,7 +1,7 @@
 //! `shelf release plan`: which tins a change ripples up to, in what order, at
 //! what versions, and every pin that moves.
 
-use super::manifest::{self, repo_key, Pin, RefKind, WorkflowPin};
+use super::manifest::{self, repo_key, Level, Pin, RefKind, WorkflowPin};
 use super::{Checkout, Workspace};
 use crate::registry::Registry;
 use anyhow::{anyhow, bail, Context, Result};
@@ -78,6 +78,10 @@ pub struct TinRelease {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub published_commit: Option<String>,
     pub reason: String,
+    /// The changelog fragments (`changes/<file>`) the release gathers, with
+    /// the level each asks for.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub changes: Vec<(String, Level)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -186,7 +190,7 @@ impl RepoRelease {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Bump {
     Patch,
     Minor,
@@ -230,6 +234,16 @@ pub fn breaking(version: &str) -> Bump {
     match semver::Version::parse(version) {
         Ok(v) if v.major == 0 => Bump::Minor,
         _ => Bump::Major,
+    }
+}
+
+/// The bump a fragment's level makes from `version`.
+pub fn bump_for(level: Level, version: &str) -> Bump {
+    match level {
+        Level::Patch => Bump::Patch,
+        Level::Minor => Bump::Minor,
+        Level::Breaking => breaking(version),
+        Level::Major => Bump::Major,
     }
 }
 
@@ -784,6 +798,7 @@ pub fn make(ws: &Workspace, cat: &dyn Catalog, req: &Request) -> Result<Plan> {
                 }
                 format!("pins {}", names.join(", "))
             };
+            let fragments = c.fragments(dir)?.unwrap_or_default();
             let next = match explicit {
                 Some(b) => bump(&base, b)?,
                 None if ahead => {
@@ -792,16 +807,30 @@ pub fn make(ws: &Workspace, cat: &dyn Catalog, req: &Request) -> Result<Plan> {
                 }
                 None => {
                     let changelog = c.read(&file_in(dir, "CHANGELOG.md"))?;
+                    let mut how = Bump::Patch;
                     if is_named
                         && changelog
                             .as_deref()
                             .is_some_and(manifest::unreleased_breaks)
                     {
                         reason.push_str("; breaking per CHANGELOG");
-                        bump(&base, breaking(&base))?
-                    } else {
-                        bump(&base, Bump::Patch)?
+                        how = breaking(&base);
                     }
+                    // The highest any fragment asks for; they're released
+                    // with this version whichever way the tin got here.
+                    if let Some(f) = fragments.iter().max_by_key(|f| f.level) {
+                        let b = bump_for(f.level, &base);
+                        if b > how {
+                            how = b;
+                            let file = format!("{}/{}", manifest::CHANGES_DIR, f.file);
+                            reason.push_str(&format!(
+                                "; {} per {}",
+                                f.level.as_str(),
+                                file_in(dir, &file)
+                            ));
+                        }
+                    }
+                    bump(&base, how)?
                 }
             };
             tins.push(TinRelease {
@@ -811,6 +840,7 @@ pub fn make(ws: &Workspace, cat: &dyn Catalog, req: &Request) -> Result<Plan> {
                 next,
                 published_commit,
                 reason,
+                changes: fragments.into_iter().map(|f| (f.file, f.level)).collect(),
             });
         }
         let root = tins
@@ -882,6 +912,15 @@ pub fn render(plan: &Plan) -> String {
                 "    {:width$}  {} -> {}  {from}{}\n",
                 t.name, t.current, t.next, t.reason
             ));
+            for (file, level) in &t.changes {
+                let file = format!("{}/{file}", manifest::CHANGES_DIR);
+                out.push_str(&format!(
+                    "    {:width$}  {} ({})\n",
+                    "",
+                    file_in(t.subdirectory.as_deref(), &file),
+                    level.as_str()
+                ));
+            }
         }
         let head = |parent: &str| {
             plan.get(parent)
@@ -1046,6 +1085,10 @@ mod tests {
         assert!(bump("one", Bump::Patch).is_err());
         assert_eq!(breaking("0.9.1"), Bump::Minor);
         assert_eq!(breaking("1.2.0"), Bump::Major);
+        assert_eq!(bump_for(Level::Breaking, "0.9.1"), Bump::Minor);
+        assert_eq!(bump_for(Level::Breaking, "1.2.0"), Bump::Major);
+        assert_eq!(bump_for(Level::Major, "0.9.1"), Bump::Major);
+        assert!(Bump::Patch < Bump::Minor && Bump::Minor < Bump::Major);
         assert_eq!(
             parse_bump("avro-mojo=minor").unwrap(),
             ("avro-mojo".into(), Bump::Minor)

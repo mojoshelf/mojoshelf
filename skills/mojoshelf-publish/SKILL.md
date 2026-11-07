@@ -168,6 +168,17 @@ than its parents pin it at, and `apply` refuses that unless
 `--allow-mismatch`. `shelf release --help` has the rest (`--changed`,
 `--bump`, `--without`, `--waves`, `--test`).
 
+Changelog entries can be fragments instead of one `## Unreleased` section
+(shelf 0.8+): each PR adds `changes/<pr>-<slug>.md` (`shelf changes new
+155-fills --bump minor` writes `changes/155-fills.minor.md`), and
+`shelf release apply` writes them under the new version in CHANGELOG.md and
+deletes them. The level is the file name's, or a first line `bump: minor`;
+`### Breaking` makes it breaking; the tin's bump is the highest. Keep a
+`changes/README.md` so the directory outlives a release, and run
+`shelf changes check` in PR CI (checkout with `fetch-depth: 0`); a PR labelled
+`no-changelog` skips it. See
+[specs/03_release.md](../../specs/03_release.md#changelog-fragments).
+
 With an older CLI, or to do it by hand:
 
 1. **Find the cascade.** `shelf info <tin>` lists its dependents

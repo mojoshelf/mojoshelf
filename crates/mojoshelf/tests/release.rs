@@ -1025,3 +1025,148 @@ fn plan_reports_a_sibling_checkout_its_parent_doesnt_pin() {
         .remote_head("iceberg.mojo", "release/iceberg-mojo-0.10.2")
         .is_empty());
 }
+
+/// Commit `files` to a workspace checkout's main and push it.
+fn push_files(fx: &Fixture, repo: &str, files: &[(&str, &str)], message: &str) {
+    let dir = fx.ws.join(repo);
+    for (f, text) in files {
+        let p = dir.join(f);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, text).unwrap();
+    }
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "--quiet", "-m", message]);
+    git(&dir, &["push", "--quiet", "origin", "main"]);
+}
+
+#[test]
+fn fragments_set_the_bump_and_are_released_into_the_changelog() {
+    let fx = fixture();
+    push_files(
+        &fx,
+        "base2",
+        &[
+            (
+                "CHANGELOG.md",
+                "# Changelog\n\n## 1.0.0 - 2026-11-01\n\n- First.\n",
+            ),
+            ("changes/README.md", "One file per change.\n"),
+            ("changes/12-speed.minor.md", "- **Faster open.**\n"),
+            ("changes/3-fix.md", "- **A fix.**\n"),
+        ],
+        "Fragments",
+    );
+    let out = fx.ok(&["release", "plan", "base2-mojo", "--json"]);
+    let plan: Value = serde_json::from_str(&out).unwrap();
+    let tin = &plan["releases"][0]["tins"][0];
+    assert_eq!(tin["next"], "1.1.0", "{out}");
+    assert!(
+        tin["reason"]
+            .as_str()
+            .unwrap()
+            .ends_with("; minor per changes/12-speed.minor.md"),
+        "{out}"
+    );
+    assert_eq!(
+        tin["changes"],
+        json!([["3-fix.md", "patch"], ["12-speed.minor.md", "minor"]])
+    );
+    // --bump still wins.
+    let out = fx.ok(&[
+        "release",
+        "plan",
+        "base2-mojo",
+        "--bump",
+        "base2-mojo=patch",
+    ]);
+    assert!(out.contains("1.0.0 -> 1.0.1"), "{out}");
+    assert!(out.contains("changes/12-speed.minor.md (minor)"), "{out}");
+
+    fx.ok(&["release", "apply", "base2-mojo", "--skip-preflight"]);
+    let b = "release/base2-mojo-1.1.0";
+    let changelog = fx.show("base2", b, "CHANGELOG.md");
+    assert!(
+        changelog.starts_with("# Changelog\n\n## 1.1.0 - ")
+            && changelog.ends_with(
+                "\n\n- **A fix.**\n\n- **Faster open.**\n\n## 1.0.0 - 2026-11-01\n\n- First."
+            ),
+        "{changelog}"
+    );
+    let dir = fx.ws.join("base2");
+    let listed = git(
+        &dir,
+        &[
+            "ls-tree",
+            "--name-only",
+            &format!("origin/{b}"),
+            "--",
+            "changes/",
+        ],
+    );
+    assert_eq!(listed, "changes/README.md");
+    // top only moves pins, and keeps no changelog: it gets none.
+    let top = fx.ws.join("top");
+    git(&top, &["fetch", "--quiet", "origin"]);
+    let listed = git(
+        &top,
+        &["ls-tree", "--name-only", "origin/release/top-mojo-2.1.1"],
+    );
+    assert!(!listed.contains("CHANGELOG.md"), "{listed}");
+}
+
+#[test]
+fn changes_new_and_check() {
+    let fx = fixture();
+    let dir = fx.ws.join("base2");
+    let shelf = |args: &[&str]| {
+        let out = Command::new(env!("CARGO_BIN_EXE_shelf"))
+            .args(args)
+            .current_dir(&dir)
+            .envs(git_env())
+            .env_remove("GITHUB_EVENT_PATH")
+            .env_remove("GITHUB_BASE_REF")
+            .output()
+            .unwrap();
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        (out.status.success(), text)
+    };
+    let check = ["changes", "check", "--base", "origin/main"];
+    git(&dir, &["checkout", "--quiet", "-b", "work"]);
+    std::fs::write(dir.join("README.md"), "docs\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "--quiet", "-m", "Docs"]);
+    let (ok, out) = shelf(&check);
+    assert!(ok && out.contains("only prose changed"), "{out}");
+
+    std::fs::write(dir.join("pixi.toml"), "# code\n").unwrap();
+    git(&dir, &["commit", "--quiet", "-am", "Code"]);
+    let (ok, out) = shelf(&check);
+    assert!(
+        !ok && out.contains("no changelog fragment was added"),
+        "{out}"
+    );
+    let (ok, out) = shelf(&[&check[..], &["--label", "no-changelog"]].concat());
+    assert!(ok, "{out}");
+
+    let (ok, out) = shelf(&["changes", "new", "7-code", "--bump", "minor"]);
+    assert!(ok && out.contains("changes/7-code.minor.md"), "{out}");
+    let (ok, out) = shelf(&["changes", "new", "7-code", "--bump", "minor"]);
+    assert!(!ok && out.contains("already exists"), "{out}");
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "--quiet", "-m", "Fragment"]);
+    let (ok, out) = shelf(&check);
+    assert!(
+        ok && out.contains("changes/7-code.minor.md (minor)"),
+        "{out}"
+    );
+
+    // A bad bump line fails the check, not the release.
+    std::fs::write(dir.join("changes/7-code.minor.md"), "bump: lots\n- x\n").unwrap();
+    git(&dir, &["commit", "--quiet", "-am", "Typo"]);
+    let (ok, out) = shelf(&check);
+    assert!(!ok && out.contains("bad first line"), "{out}");
+}

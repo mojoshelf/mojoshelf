@@ -5,7 +5,7 @@
 use super::gh::{self, Checks, Pr};
 use super::manifest::{self, repo_key};
 use super::plan::{github_slug, Plan, RepoRelease};
-use super::{read_at, workflows_at};
+use super::{fragments_at, read_at, workflows_at};
 use crate::git;
 use crate::registry::Registry;
 use anyhow::{anyhow, bail, Context, Result};
@@ -515,10 +515,31 @@ fn release_edits(plan: &Plan, r: &RepoRelease) -> Result<Vec<String>> {
                 .collect();
             format!("### Changed\n\n- Pins {}.", pins.join(", "))
         };
+        // The fragments are read at HEAD, which is the branch just cut from
+        // the default branch, and deleted in the release commit.
+        let fragments = fragments_at(&r.path, "HEAD", dir)?;
+        let entry = fragments.as_deref().map(manifest::fragments_entry);
+        let full = r.path.join(&changelog);
+        if entry.as_deref().is_some_and(|e| !e.is_empty()) && !full.exists() {
+            std::fs::write(&full, "# Changelog\n")
+                .with_context(|| format!("could not write {}", full.display()))?;
+        }
         if edit(&r.path, &changelog, |s| {
-            Ok(manifest::release_changelog(s, &t.next, &date, &fallback))
+            Ok(manifest::release_changelog(
+                s,
+                &t.next,
+                &date,
+                entry.as_deref(),
+                &fallback,
+            ))
         })? {
             changed.push(changelog);
+        }
+        for f in fragments.iter().flatten() {
+            let file = in_dir(dir, &format!("{}/{}", manifest::CHANGES_DIR, f.file));
+            std::fs::remove_file(r.path.join(&file))
+                .with_context(|| format!("{}: could not delete {file}", r.repo))?;
+            changed.push(file);
         }
     }
     Ok(changed)
@@ -1255,6 +1276,7 @@ mod tests {
                 next: "1.0.1".into(),
                 published_commit: None,
                 reason: "named".into(),
+                changes: vec![],
             }],
             pins: vec![],
             workflow_pins: vec![],

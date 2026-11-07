@@ -1,3 +1,4 @@
+mod changes;
 mod git;
 mod graduate;
 mod pixi;
@@ -93,6 +94,13 @@ enum Cmd {
         #[command(subcommand)]
         cmd: release::ReleaseCmd,
     },
+    /// Changelog fragments under changes/, one per change, which `shelf
+    /// release apply` writes into CHANGELOG.md: write one, or check that a PR
+    /// adds one.
+    Changes {
+        #[command(subcommand)]
+        cmd: changes::ChangesCmd,
+    },
 }
 
 /// True when running as the pixi extension (`pixi shelf …` dispatches to a
@@ -136,6 +144,7 @@ fn main() {
             out,
         } => graduate::run(maintainer.as_deref(), license.as_deref(), &out),
         Cmd::Release { cmd } => release::run(&reg, cmd),
+        Cmd::Changes { cmd } => changes::run(cmd),
     };
     if let Err(e) = result {
         eprintln!("error: {e:#}");

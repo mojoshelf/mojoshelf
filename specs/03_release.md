@@ -28,8 +28,9 @@ Status: implemented in the CLI (`shelf release plan` and `apply`,
 - There's no preflight of a dependent's CI sibling layout; preflight builds
   the release heads as a consumer would.
 - `--changed` counts non-merge commits whose subject doesn't start with
-  `Release`. Changelog fragments and consumer PRs (open questions below) are
-  not done.
+  `Release`. Consumer PRs (open question below) are not done.
+- Changelog fragments (mojoshelf#36) are read as well as `Unreleased`; see
+  [Changelog fragments](#changelog-fragments).
 
 ## The problem
 
@@ -95,7 +96,9 @@ by its git URL's last path segment, or `--repo name=path`).
 3. **Versions.** Patch for a tin that's only in the cascade to move pins. For
    a named tin, `--bump name=minor|patch|major` (default patch), or from its
    changelog's `Unreleased` headings if it has one (`### Breaking` or
-   `### Removed` → minor below 1.0, major after).
+   `### Removed` → minor below 1.0, major after). The highest level of the
+   tin's [changelog fragments](#changelog-fragments) raises it further, for
+   any tin in the cascade; `--bump` still overrides both.
 4. **Print the plan**: tin, current → next version, why it's in, and each pin
    it moves (file, table, old → new rev). `plan` changes nothing. `--json`
    prints it for scripts.
@@ -111,7 +114,9 @@ their own pin moves, since they reach the root by `path = ".."`.
    - `version` set in `shelf.toml`, and in the manifest's `[package]` and
      `[workspace]` where present;
    - `Unreleased` in `CHANGELOG.md`, if there is one, moved under the new
-     version and today's date;
+     version and today's date, followed by the tin's changelog fragments,
+     which are deleted (a repository with fragments and no `Unreleased` gets
+     the new version's section above its newest one);
    - each pin to a tin in the cascade set to **the head commit of that tin's
      release branch**, wherever the repository pins it, CI checkouts of it
      included;
@@ -242,12 +247,68 @@ Two ways to drop them, both outside this proposal:
   step: a build farm, per-platform artefacts, and the `.mojoc` compiler-version
   lockstep.
 
+### Changelog fragments
+
+Every PR adding its entry under one `## Unreleased` made any two open PRs
+conflict in CHANGELOG.md, and every release too (mojoshelf#36). Instead each
+PR adds one file to `changes/` (next to the tin's CHANGELOG.md, so `full/changes/`
+for a subdirectory tin), holding the entry as it would read in the changelog:
+
+```markdown
+- **Fills: forward and backward.** `fill_null(strategy=...)` on a column;
+  closes #155.
+```
+
+- **Level.** From the file name, `155-fills.minor.md`, or a first line
+  `bump: minor` (removed from the entry); `patch`, `minor`, `major`, or
+  `breaking` (minor below 1.0, major after). A `### Breaking` or
+  `### Removed` heading in the entry makes it `breaking`. No level is a
+  patch. A tin's bump is the highest of its fragments'.
+- **Order.** By the number the name starts with (the PR's), then by name.
+- **Release.** `shelf release plan` lists each tin's fragments with their
+  levels. `apply` writes `## X.Y.Z - date` and the fragments into
+  CHANGELOG.md, after whatever `Unreleased` still says, and deletes them, in
+  the release commit; CHANGELOG.md keeps the history. A `changes/README.md`
+  isn't a fragment and stays, so the directory survives the release: its
+  existence is what tells `apply` the repository keeps fragments (and so a
+  pin-only release still gets a `## X.Y.Z` entry naming its pins when there
+  is no `Unreleased`).
+- **Migration.** A repository can keep `## Unreleased` while it moves; both
+  are read. Moving means taking the `Unreleased` entries into `changes/`,
+  deleting the heading, and adding the check below to CI.
+- **`shelf changes new <slug> [--bump minor]`** writes
+  `changes/<slug>[.<level>].md` from a template, in the current directory.
+- **`shelf changes check`**, for PR CI: compares `HEAD` with
+  `origin/$GITHUB_BASE_REF` (or `--base <ref>`; needs the base's history, so
+  `fetch-depth: 0`) and fails when code changed and no fragment was added
+  or edited. Prose-only changes (`*.md`, `docs/`, `LICENSE`, `NOTICE`, as in
+  the CI change filters) pass, and so do PRs labelled `no-changelog` or
+  `release` (the label `apply` gives its PRs), read from the event payload
+  or `--label`. A fragment it can't read (a bad `bump:` line) or an empty
+  one fails here rather than at release.
+
+```yaml
+# .github/workflows/changelog.yml
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+jobs:
+  fragment:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: prefix-dev/setup-pixi@v0
+        with:
+          run-install: false
+      - run: pixi global install --channel https://mojoshelf.org/channel mojoshelf
+      - run: shelf changes check
+```
+
 ## Open questions
 
 - Should `release` also open the consumer apps' PRs (`--consumer`), or leave
   that to `pixi shelf update`?
-- Changelog fragments (one file per change under `changes/`, gathered at
-  release) would end changelog conflicts when several PRs land together.
-  Support them now, or only `Unreleased`?
 - `--changed` needs to tell release commits from others. By subject
   (`Release x.y.z`), by the files touched, or by a trailer?
