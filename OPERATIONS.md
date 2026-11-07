@@ -120,6 +120,29 @@ npx wrangler deploy                                   # then deploy
 Rolling back is the reverse: deploy the older Worker first, then reverse the
 migration by hand, since `migrations apply` only moves forwards.
 
+## Releasing the CLI
+
+Bump the version in `crates/mojoshelf/Cargo.toml`, `Cargo.lock`
+(`cargo update -p mojoshelf`), `pixi.toml` and `recipe.yaml`, and open a PR
+titled "Release CLI X.Y.Z". After it merges, tag the merge commit and push the
+tag, which runs `release-cli` (it builds the package and commits the channel to
+`main`):
+
+```sh
+git checkout main && git pull --ff-only
+git tag cli-vX.Y.Z && git push origin cli-vX.Y.Z
+```
+
+Until `CLOUDFLARE_API_TOKEN` is set in CI (#39) that workflow does not deploy
+the Worker. Pull `main` once it finishes, then deploy by hand, running any
+pending D1 migrations first (see above):
+
+```sh
+cd crates/shelf-worker && npx wrangler deploy
+```
+
+Verify with `pixi global update mojoshelf && shelf --version`.
+
 ## The sync cron
 
 `crons: ["23 */6 * * *"]` — 00:23, 06:23, 12:23 and 18:23 UTC. Each run
