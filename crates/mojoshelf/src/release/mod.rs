@@ -84,7 +84,7 @@ pub struct PlanArgs {
     #[arg(long)]
     changed: bool,
     /// A named tin's bump, name=patch|minor|major (default: patch, or what
-    /// its CHANGELOG's Unreleased headings say).
+    /// its CHANGELOG's Unreleased headings or its changes/ fragments say).
     #[arg(long, value_name = "NAME=LEVEL")]
     bump: Vec<String>,
     /// Where a tin's repository is checked out (default: the directory named
@@ -265,6 +265,11 @@ impl Checkout {
         read_at(&self.path, &self.base, file)
     }
 
+    /// The changelog fragments under `dir`'s `changes/` at the base commit.
+    pub fn fragments(&self, dir: Option<&str>) -> Result<Option<Vec<manifest::Fragment>>> {
+        fragments_at(&self.path, &self.base, dir)
+    }
+
     /// The CI workflow files at the base commit.
     pub fn workflows(&self) -> Result<Vec<String>> {
         workflows_at(&self.path, &self.base)
@@ -313,6 +318,35 @@ pub fn read_at(path: &Path, commit: &str, file: &str) -> Result<Option<String>> 
         path,
         &["show", &format!("{commit}:{file}")],
     )?))
+}
+
+/// The changelog fragments in `changes/` (under a tin's subdirectory, if it
+/// has one) at `commit`, in release order. `None` when there is no such
+/// directory: the repository doesn't keep fragments.
+pub fn fragments_at(
+    path: &Path,
+    commit: &str,
+    dir: Option<&str>,
+) -> Result<Option<Vec<manifest::Fragment>>> {
+    let changes = match dir {
+        Some(d) => format!("{d}/{}/", manifest::CHANGES_DIR),
+        None => format!("{}/", manifest::CHANGES_DIR),
+    };
+    let listed = git::git(path, &["ls-tree", "--name-only", commit, "--", &changes])?;
+    if listed.is_empty() {
+        return Ok(None);
+    }
+    let mut found = Vec::new();
+    for file in listed.lines() {
+        let name = file.strip_prefix(&changes).unwrap_or(file);
+        if !manifest::is_fragment_file(name) {
+            continue;
+        }
+        let text = git::git_raw(path, &["show", &format!("{commit}:{file}")])?;
+        found.push(manifest::fragment(name, &text)?);
+    }
+    manifest::sort_fragments(&mut found);
+    Ok(Some(found))
 }
 
 pub fn workflows_at(path: &Path, commit: &str) -> Result<Vec<String>> {

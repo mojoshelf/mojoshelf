@@ -1,6 +1,7 @@
 //! What a release changes in a repository's files: `rev` pins in pixi
 //! manifests, version fields, CI workflows that check a sibling out by
-//! commit, and the changelog's `Unreleased` section.
+//! commit, the changelog's `Unreleased` section, and the changelog fragments
+//! under `changes/` that replace it.
 //!
 //! Every edit keeps the file's formatting and comments; only the value that
 //! moves is rewritten.
@@ -563,38 +564,201 @@ pub fn unreleased(text: &str) -> Option<&str> {
     unreleased_section(text).map(|(_, body, end)| &text[body..end])
 }
 
-/// Whether the `Unreleased` section declares a breaking change: a
-/// `### Breaking` or `### Removed` heading.
-pub fn unreleased_breaks(text: &str) -> bool {
-    unreleased(text).is_some_and(|section| {
-        section.lines().any(|l| {
-            let l = l.trim().to_lowercase();
-            l.starts_with("### breaking") || l.starts_with("### removed")
-        })
+/// Whether a piece of changelog declares a breaking change: a `### Breaking`
+/// or `### Removed` heading.
+fn declares_break(section: &str) -> bool {
+    section.lines().any(|l| {
+        let l = l.trim().to_lowercase();
+        l.starts_with("### breaking") || l.starts_with("### removed")
     })
 }
 
-/// Move `Unreleased` under `## [version] - date`, leaving an empty
-/// `Unreleased` above it. When there was nothing unreleased, `fallback` (the
-/// pins a pin-only release moves) becomes the version's entry. `None` when the
-/// changelog has no `Unreleased` section.
-pub fn release_changelog(text: &str, version: &str, date: &str, fallback: &str) -> Option<String> {
-    let (heading, body, end) = unreleased_section(text)?;
+/// Whether the `Unreleased` section declares a breaking change: a
+/// `### Breaking` or `### Removed` heading.
+pub fn unreleased_breaks(text: &str) -> bool {
+    unreleased(text).is_some_and(declares_break)
+}
+
+/// The directory of changelog fragments, next to CHANGELOG.md.
+pub const CHANGES_DIR: &str = "changes";
+
+/// How much a fragment's change bumps the version. `Breaking` is what a
+/// `### Breaking` heading says: minor below 1.0, major after, so it sorts
+/// between the two.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Level {
+    Patch,
+    Minor,
+    Breaking,
+    Major,
+}
+
+impl Level {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Level::Patch => "patch",
+            Level::Minor => "minor",
+            Level::Breaking => "breaking",
+            Level::Major => "major",
+        }
+    }
+}
+
+impl std::str::FromStr for Level {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self> {
+        match s.trim().to_lowercase().as_str() {
+            "patch" => Ok(Level::Patch),
+            "minor" => Ok(Level::Minor),
+            "breaking" => Ok(Level::Breaking),
+            "major" => Ok(Level::Major),
+            _ => anyhow::bail!("'{s}' is not a bump; use patch, minor, breaking or major"),
+        }
+    }
+}
+
+/// One change's changelog entry: a file under `changes/`, so that two PRs
+/// never edit the same lines. Released by `shelf release apply`, which
+/// writes it under the new version in CHANGELOG.md and deletes it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Fragment {
+    /// The file name inside `changes/`.
+    pub file: String,
+    pub level: Level,
+    /// The entry, without a `bump:` line.
+    pub body: String,
+}
+
+/// Whether a file in `changes/` is a fragment: Markdown, and not the
+/// directory's README (which can explain the convention and keeps the
+/// directory in git between releases).
+pub fn is_fragment_file(name: &str) -> bool {
+    name.ends_with(".md") && !name.starts_with('.') && !name.eq_ignore_ascii_case("README.md")
+}
+
+/// Read a fragment. Its level is the highest of the file name's
+/// (`155-fills.minor.md`), a first line `bump: minor`, and `breaking` for a
+/// `### Breaking` or `### Removed` heading; patch when none says.
+pub fn fragment(file: &str, text: &str) -> Result<Fragment> {
+    let stem = file.strip_suffix(".md").unwrap_or(file);
+    let mut level = stem
+        .rsplit_once('.')
+        .and_then(|(_, l)| l.parse().ok())
+        .unwrap_or(Level::Patch);
+    let mut body = text.trim_start_matches(['\n', '\r']);
+    let first = body.lines().next().unwrap_or("").trim();
+    if let Some(declared) = first
+        .split_once(':')
+        .filter(|(k, _)| k.trim().eq_ignore_ascii_case("bump"))
+        .map(|(_, v)| v)
+    {
+        let declared: Level = declared
+            .parse()
+            .with_context(|| format!("{CHANGES_DIR}/{file}: bad first line '{first}'"))?;
+        level = level.max(declared);
+        body = body.split_once('\n').map_or("", |(_, rest)| rest);
+    }
+    if declares_break(body) {
+        level = level.max(Level::Breaking);
+    }
+    Ok(Fragment {
+        file: file.to_string(),
+        level,
+        body: body.trim().to_string(),
+    })
+}
+
+/// The order fragments are released in: by the number they start with (the
+/// PR's, as in `155-fills.md`), then by name; unnumbered ones last.
+pub fn sort_fragments(fragments: &mut [Fragment]) {
+    fragments.sort_by_key(|f| {
+        let digits: String = f.file.chars().take_while(char::is_ascii_digit).collect();
+        (digits.parse::<u64>().unwrap_or(u64::MAX), f.file.clone())
+    });
+}
+
+/// The fragments' entries, one after the other, as a version's section.
+pub fn fragments_entry(fragments: &[Fragment]) -> String {
+    fragments
+        .iter()
+        .map(|f| f.body.as_str())
+        .filter(|b| !b.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+/// Write the release's section into the changelog: `## [version] - date`
+/// holding what `Unreleased` says (leaving an empty `Unreleased` above it)
+/// and then `fragments`. A changelog without an `Unreleased` section gets
+/// the section above its first `##` heading, but only when the repository
+/// keeps fragments (`fragments` is `Some`). When there was nothing to say,
+/// `fallback` (the pins a pin-only release moves) becomes the entry. `None`
+/// when the changelog has neither.
+pub fn release_changelog(
+    text: &str,
+    version: &str,
+    date: &str,
+    fragments: Option<&str>,
+    fallback: &str,
+) -> Option<String> {
+    let entry_of = |unreleased: &str| {
+        let parts: Vec<&str> = [unreleased.trim(), fragments.unwrap_or("").trim()]
+            .into_iter()
+            .filter(|p| !p.is_empty())
+            .collect();
+        if parts.is_empty() {
+            fallback.trim().to_string()
+        } else {
+            parts.join("\n\n")
+        }
+    };
+    let title = |bracketed: bool| {
+        if bracketed {
+            format!("## [{version}] - {date}\n")
+        } else {
+            format!("## {version} - {date}\n")
+        }
+    };
+    let Some((heading, body, end)) = unreleased_section(text) else {
+        fragments?;
+        // Above the newest version, in the form the file already uses.
+        let mut offset = 0;
+        let mut first = None;
+        for line in text.split_inclusive('\n') {
+            if line.trim_start().starts_with("## ") {
+                first = Some((offset, line.contains('[')));
+                break;
+            }
+            offset += line.len();
+        }
+        let (at, bracketed) = first.unwrap_or((text.len(), false));
+        let entry = entry_of("");
+        let mut out = String::with_capacity(text.len() + entry.len() + 64);
+        let before = text[..at].trim_end();
+        if !before.is_empty() {
+            out.push_str(before);
+            out.push_str("\n\n");
+        }
+        out.push_str(&title(bracketed));
+        if !entry.is_empty() {
+            out.push('\n');
+            out.push_str(&entry);
+            out.push('\n');
+        }
+        if at < text.len() {
+            out.push('\n');
+            out.push_str(&text[at..]);
+        }
+        return Some(out);
+    };
     let section = &text[body..end];
     let bracketed = text[heading..body].contains('[');
-    let title = if bracketed {
-        format!("## [{version}] - {date}\n")
-    } else {
-        format!("## {version} - {date}\n")
-    };
-    let mut entry = section.trim().to_string();
-    if entry.is_empty() {
-        entry = fallback.trim().to_string();
-    }
+    let entry = entry_of(section);
     let mut out = String::with_capacity(text.len() + 64);
     out.push_str(&text[..body]);
     out.push('\n');
-    out.push_str(&title);
+    out.push_str(&title(bracketed));
     if !entry.is_empty() {
         out.push('\n');
         out.push_str(&entry);
@@ -863,7 +1027,7 @@ test = "mojo run tests"
     #[test]
     fn changelog_unreleased_moves_under_the_new_version() {
         assert!(unreleased_breaks(CHANGELOG));
-        let out = release_changelog(CHANGELOG, "0.3.0", "2026-11-06", "unused").unwrap();
+        let out = release_changelog(CHANGELOG, "0.3.0", "2026-11-06", None, "unused").unwrap();
         assert_eq!(
             out,
             "# Changelog\n\nIntro.\n\n## [Unreleased]\n\n## [0.3.0] - 2026-11-06\n\n### Removed\n\n- `old_api`.\n\n## [0.2.0] - 2026-11-05\n\n### Added\n\n- Streaming.\n"
@@ -878,6 +1042,7 @@ test = "mojo run tests"
             text,
             "0.1.1",
             "2026-11-06",
+            None,
             "### Changed\n\n- Pins deflate-mojo 0.2.1.",
         )
         .unwrap();
@@ -886,9 +1051,95 @@ test = "mojo run tests"
             "# Changelog\n\n## Unreleased\n\n## 0.1.1 - 2026-11-06\n\n### Changed\n\n- Pins deflate-mojo 0.2.1.\n\n## 0.1.0 - 2026-01-01\n\n- First.\n"
         );
         // At the end of the file, and with no Unreleased section at all.
-        let last = release_changelog("## [Unreleased]\n- x\n", "1.0.0", "2026-11-06", "").unwrap();
+        let last =
+            release_changelog("## [Unreleased]\n- x\n", "1.0.0", "2026-11-06", None, "").unwrap();
         assert_eq!(last, "## [Unreleased]\n\n## [1.0.0] - 2026-11-06\n\n- x\n");
-        assert!(release_changelog("# Changelog\n", "1.0.0", "d", "").is_none());
+        assert!(release_changelog("# Changelog\n", "1.0.0", "d", None, "").is_none());
         assert!(!unreleased_breaks("# nothing\n"));
+    }
+
+    #[test]
+    fn a_fragments_level_comes_from_its_name_its_first_line_or_its_headings() {
+        let f = fragment("155-fills.minor.md", "- **Fills.** More of them.\n").unwrap();
+        assert_eq!(f.level, Level::Minor);
+        assert_eq!(f.body, "- **Fills.** More of them.");
+        // No level anywhere is a patch; a dot in the slug isn't a level.
+        assert_eq!(
+            fragment("160-v1.2.md", "- x\n").unwrap().level,
+            Level::Patch
+        );
+        let f = fragment("162-scan.md", "bump: Minor\n\n- **Scan.**\n").unwrap();
+        assert_eq!((f.level, f.body.as_str()), (Level::Minor, "- **Scan.**"));
+        // The highest of the two wins.
+        let f = fragment("163-x.major.md", "bump: minor\n- x\n").unwrap();
+        assert_eq!(f.level, Level::Major);
+        let f = fragment("164-old.md", "### Removed\n\n- `old_api`.\n").unwrap();
+        assert_eq!(f.level, Level::Breaking);
+        let f = fragment("165-old.minor.md", "bump: patch\n### Breaking\n- y\n").unwrap();
+        assert_eq!(f.level, Level::Breaking);
+        // A typo in the bump line is an error, not a silent patch; a colon
+        // elsewhere in the first line is just text.
+        assert!(fragment("166-x.md", "bump: huge\n- x\n").is_err());
+        let f = fragment("167-x.md", "- **Fix: the scan.**\n").unwrap();
+        assert_eq!(
+            (f.level, f.body.as_str()),
+            (Level::Patch, "- **Fix: the scan.**")
+        );
+        assert!(Level::Minor < Level::Breaking && Level::Breaking < Level::Major);
+    }
+
+    #[test]
+    fn fragment_files_and_their_order() {
+        assert!(is_fragment_file("155-fills.minor.md"));
+        assert!(!is_fragment_file("README.md"));
+        assert!(!is_fragment_file(".gitkeep"));
+        assert!(!is_fragment_file("notes.txt"));
+        let mut fs: Vec<Fragment> = ["notes.md", "155-b.md", "36-a.md", "155-a.minor.md"]
+            .iter()
+            .map(|n| fragment(n, n).unwrap())
+            .collect();
+        sort_fragments(&mut fs);
+        let names: Vec<&str> = fs.iter().map(|f| f.file.as_str()).collect();
+        assert_eq!(names, ["36-a.md", "155-a.minor.md", "155-b.md", "notes.md"]);
+        assert_eq!(fragments_entry(&fs[..2]), "36-a.md\n\n155-a.minor.md");
+    }
+
+    #[test]
+    fn fragments_go_above_the_newest_version() {
+        let text = "# Changelog\n\nIntro.\n\n## 0.2.0 - 2026-11-05\n\n- Streaming.\n";
+        let out = release_changelog(
+            text,
+            "0.3.0",
+            "2026-11-07",
+            Some("- **A.**\n\n- **B.**"),
+            "unused",
+        )
+        .unwrap();
+        assert_eq!(
+            out,
+            "# Changelog\n\nIntro.\n\n## 0.3.0 - 2026-11-07\n\n- **A.**\n\n- **B.**\n\n## 0.2.0 - 2026-11-05\n\n- Streaming.\n"
+        );
+        // Brackets when the file uses them; a pin-only release gets the
+        // fallback; a changelog with no version yet gets one at the end.
+        let text = "# Changelog\n\n## [0.2.0] - 2026-11-05\n\n- Streaming.\n";
+        let out = release_changelog(text, "0.2.1", "d", Some(""), "- Pins x 1.0.0.").unwrap();
+        assert_eq!(
+            out,
+            "# Changelog\n\n## [0.2.1] - d\n\n- Pins x 1.0.0.\n\n## [0.2.0] - 2026-11-05\n\n- Streaming.\n"
+        );
+        let out = release_changelog("# Changelog\n", "0.1.0", "d", Some("- First."), "").unwrap();
+        assert_eq!(out, "# Changelog\n\n## 0.1.0 - d\n\n- First.\n");
+        let out = release_changelog("## 0.1.0 - d\n", "0.1.1", "e", Some("- x"), "").unwrap();
+        assert_eq!(out, "## 0.1.1 - e\n\n- x\n\n## 0.1.0 - d\n");
+    }
+
+    #[test]
+    fn during_migration_unreleased_and_fragments_are_both_released() {
+        let out =
+            release_changelog(CHANGELOG, "0.3.0", "2026-11-06", Some("- **New.**"), "").unwrap();
+        assert_eq!(
+            out,
+            "# Changelog\n\nIntro.\n\n## [Unreleased]\n\n## [0.3.0] - 2026-11-06\n\n### Removed\n\n- `old_api`.\n\n- **New.**\n\n## [0.2.0] - 2026-11-05\n\n### Added\n\n- Streaming.\n"
+        );
     }
 }

@@ -185,7 +185,8 @@ registry's dependents; tins published from a subdirectory go with their
 repository's root. Prints, parents first, each repository's release branch,
 each tin's current → next version (patch for a pin-only release; for a named
 tin `--bump name=patch|minor|major`, or minor/major from `### Breaking` or
-`### Removed` under its CHANGELOG's `Unreleased`), and every pin that moves,
+`### Removed` under its CHANGELOG's `Unreleased`, or the highest level of its
+fragments in `changes/`, which it lists), and every pin that moves,
 in manifests and in CI workflows that pin the old commit exactly. Reads each
 repository at its fetched default branch; changes nothing.
 
@@ -221,3 +222,23 @@ PR per branch via `gh`, labelled `release` and linking the others (without
 
 Publishing is `shelf publish` from a detached checkout of each release head,
 then a check that the registry shows the version at that commit.
+
+The changelog in a release commit is `Unreleased` moved under the new
+version, then the tin's changelog fragments, which the commit deletes.
+
+### shelf changes new <slug> [--bump patch|minor|breaking|major]
+
+Writes a changelog fragment, `changes/<slug>[.<level>].md`, from a template,
+in the current directory. One file per PR, so PRs don't conflict over
+CHANGELOG.md. The level can also be a first line `bump: minor`; a
+`### Breaking` or `### Removed` heading makes it `breaking`; none is patch.
+Details in [specs/03_release.md](03_release.md#changelog-fragments).
+
+### shelf changes check [--base <ref>] [--label <name>]
+
+For PR CI: fails when the branch changes code since `--base` (default
+`origin/$GITHUB_BASE_REF`, else origin's default branch) without adding or
+editing a fragment. Prose-only changes (`*.md`, `docs/`, `LICENSE`, `NOTICE`)
+pass, as do PRs labelled `no-changelog` or `release` (labels from
+`$GITHUB_EVENT_PATH`, or `--label`). Also fails on a fragment `shelf release`
+couldn't read.
