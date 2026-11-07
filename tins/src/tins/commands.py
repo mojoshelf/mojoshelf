@@ -304,6 +304,30 @@ def _describes_unreleased_work(text: str, published: str) -> bool:
     return False
 
 
+_FRAGMENT = re.compile(r"(?:^|/)changes/(?!README\.md$)[^/]+\.md\Z")
+
+
+def _fragment_files(repo: Repo) -> list[str]:
+    """The changelog fragments (`changes/*.md`, README.md excepted) a repo holds.
+
+    Repos that keep fragments rather than an `## Unreleased` section (see
+    mojoshelf specs/03_release.md, "Changelog fragments") describe pending
+    work there. A subdirectory tin's fragments sit in `<subdir>/changes/`.
+    """
+    if repo.ref is None:
+        found = [
+            str(f.relative_to(repo.path))
+            for f in repo.path.glob("**/changes/*.md")
+            if ".pixi" not in f.parts and ".git" not in f.parts
+        ]
+    else:
+        out, _, code = gitutil.run(
+            ["git", "ls-tree", "-r", "--name-only", repo.ref], cwd=repo.path, check=False
+        )
+        found = out.splitlines() if code == 0 else []
+    return sorted(f for f in found if _FRAGMENT.search(f))
+
+
 def _changelog_gap(repo: Repo, published: str) -> str | None:
     """Why the changelog does not cover the release `repo` owes, or None.
 
@@ -312,6 +336,8 @@ def _changelog_gap(repo: Repo, published: str) -> str | None:
     and are not meant to acquire one until they next publish, so a check that
     asked every repo would report nineteen files that nobody wants written.
     """
+    if _fragment_files(repo):
+        return None  # the pending changes are described in changes/
     text = read_at_ref(repo.path, CHANGELOG, repo.ref)
     if text is None:
         return (
@@ -323,7 +349,7 @@ def _changelog_gap(repo: Repo, published: str) -> str | None:
         return None
     return (
         f"{CHANGELOG} records nothing since {published} — its [Unreleased] section is "
-        f"missing or empty: write the entry on main before the version is bumped, or the "
+        f"missing or empty and changes/ holds no fragment: write the entry on main before the version is bumped, or the "
         f"release ships undescribed"
     )
 
