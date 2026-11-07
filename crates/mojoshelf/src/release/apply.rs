@@ -29,6 +29,8 @@ pub struct Opts {
     pub waves: bool,
     pub allow_mismatch: bool,
     pub consumers: Vec<String>,
+    /// Print preflight's whole build output instead of a line per package.
+    pub verbose: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -255,7 +257,7 @@ fn run(reg: &Registry, path: &Path, st: &mut State, opts: &Opts, resuming: bool)
         if opts.skip_preflight {
             println!("preflight skipped (--skip-preflight)");
         } else {
-            preflight(reg, path, st, group, opts.test)?;
+            preflight(reg, path, st, group, opts.test, opts.verbose)?;
         }
         let with_prs = prs(path, st, group)?;
         if with_prs && (opts.wait || opts.merge) {
@@ -820,6 +822,62 @@ fn preflight_manifest(set: &[ResolvedTin], channels: &[String], platform: &str) 
     Ok(crate::pixi::write_pins(&doc.to_string(), set, true)?.0)
 }
 
+/// Lines of a failed package's build shown when preflight fails.
+const FAILURE_TAIL: usize = 40;
+
+/// Run preflight's `pixi install` with its output in `log`, printing one line
+/// per package it builds as each finishes and, on a failure, the end of the
+/// failed build and where the whole log is.
+fn install_summarized(mut install: Command, log: &Path) -> Result<bool> {
+    use std::io::{BufRead, BufReader};
+    let file = std::fs::File::create(log)
+        .with_context(|| format!("could not create {}", log.display()))?;
+    install
+        .stdout(file.try_clone()?)
+        .stderr(file)
+        .stdin(std::process::Stdio::null());
+    let mut child = install
+        .spawn()
+        .context("failed to run pixi; is it installed?")?;
+    let mut reader = BufReader::new(std::fs::File::open(log)?);
+    let mut summary = super::buildlog::BuildLog::default();
+    let feed = |summary: &mut super::buildlog::BuildLog, line: &[u8]| {
+        if let Some(b) = summary.feed(&String::from_utf8_lossy(line)) {
+            println!("preflight:   {}", b.describe());
+        }
+    };
+    let mut line = Vec::new();
+    let status = loop {
+        let exited = child.try_wait()?;
+        // Whole lines only; a partial one is finished on a later read.
+        while reader.read_until(b'\n', &mut line)? > 0 && line.ends_with(b"\n") {
+            feed(&mut summary, &line);
+            line.clear();
+        }
+        if let Some(status) = exited {
+            if !line.is_empty() {
+                feed(&mut summary, &line);
+            }
+            break status;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    };
+    if !status.success() {
+        println!("preflight: pixi install failed; the end of its output:");
+        for l in summary.failure(FAILURE_TAIL) {
+            println!("{l}");
+        }
+        println!("preflight: the whole log is {}", log.display());
+    } else {
+        println!(
+            "preflight: {} package{} built",
+            summary.builds.len(),
+            if summary.builds.len() == 1 { "" } else { "s" }
+        );
+    }
+    Ok(status.success())
+}
+
 /// One scratch project that adds every release head the way a consumer
 /// would, in one edit, then solves and builds; with `test`, each tin's own
 /// `test` task too. Only the repos whose head preflight hasn't passed at run.
@@ -829,6 +887,7 @@ fn preflight(
     st: &mut State,
     group: &[String],
     test: bool,
+    verbose: bool,
 ) -> Result<()> {
     let targets: Vec<String> = group
         .iter()
@@ -912,12 +971,17 @@ fn preflight(
         if targets.len() == 1 { "" } else { "s" },
         dir.display()
     );
-    let status = Command::new("pixi")
-        .args(["install", "--manifest-path"])
-        .arg(&manifest)
-        .status()
-        .context("failed to run pixi; is it installed?")?;
-    if !status.success() {
+    let mut install = Command::new("pixi");
+    install.args(["install", "--manifest-path"]).arg(&manifest);
+    let ok = if verbose {
+        install
+            .status()
+            .context("failed to run pixi; is it installed?")?
+            .success()
+    } else {
+        install_summarized(install, &dir.join("preflight.log"))?
+    };
+    if !ok {
         bail!(
             "preflight failed: the release heads don't solve and build together (scratch project in \
              {}); no PRs were opened. Fix the release branch with a new commit, push it, and \
