@@ -17,6 +17,9 @@ use std::process::Command;
 
 pub const STATE_FILE: &str = ".shelf-release.json";
 
+/// The last line of every release commit `apply` writes.
+const RELEASE_COMMIT_MARK: &str = "Made by `shelf release apply`.";
+
 pub struct Opts {
     pub test: bool,
     pub skip_preflight: bool,
@@ -41,6 +44,11 @@ pub struct State {
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct RepoState {
+    /// The commit the release branch was cut from, recorded as soon as the
+    /// local branch exists and before the release commit is written, so a run
+    /// stopped before the push leaves a trace `--resume` can act on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cut_from: Option<String>,
     /// The release branch's head, as pushed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub head: Option<String>,
@@ -97,6 +105,40 @@ impl State {
             .all(|t| done.contains(&t.name))
     }
 
+    /// Where each repo's release stopped, one line each, for the error that
+    /// refuses to start a second release over this one.
+    fn progress(&self) -> Vec<String> {
+        self.plan
+            .releases
+            .iter()
+            .map(|r| {
+                let s = self.repos.get(&r.repo).cloned().unwrap_or_default();
+                let step = if self.is_published(&r.repo) {
+                    "published".to_string()
+                } else if s.merged {
+                    "merged, not yet published".to_string()
+                } else if let Some(pr) = &s.pr {
+                    format!("PR {} open", pr.url)
+                } else if let Some(head) = &s.head {
+                    match &s.preflight {
+                        Some(p) if p == head => {
+                            format!(
+                                "pushed ({}), preflight passed, no PR",
+                                crate::short_sha(head)
+                            )
+                        }
+                        _ => format!("pushed ({}), not yet preflighted", crate::short_sha(head)),
+                    }
+                } else if s.cut_from.is_some() {
+                    "branch cut locally, stopped before it was pushed".to_string()
+                } else {
+                    "not cut yet".to_string()
+                };
+                format!("  {}: {}: {step}", r.repo, r.branch)
+            })
+            .collect()
+    }
+
     /// Each parent repo's current release head, keyed by its repo URL.
     fn parent_heads(&self, r: &RepoRelease) -> Result<HashMap<String, String>> {
         let mut heads = HashMap::new();
@@ -112,11 +154,22 @@ impl State {
 
 pub fn start(reg: &Registry, root: &Path, plan: Plan, opts: &Opts) -> Result<()> {
     let path = root.join(STATE_FILE);
-    if path.exists() && !State::load(&path).map(|s| s.done).unwrap_or(false) {
-        bail!(
-            "a release is under way here ({STATE_FILE}); `shelf release apply --resume` carries on \
-             with it, or delete the file to start over"
-        );
+    if path.exists() {
+        match State::load(&path) {
+            Ok(st) if st.done => {}
+            Ok(st) => bail!(
+                "a release is under way here ({STATE_FILE}):\n{}\n`shelf release apply --resume` \
+                 carries on from there: it cuts and pushes the branches not pushed yet (reusing a \
+                 local one that holds only its release commit), re-pins below any branch that \
+                 moved, then preflights, opens the PRs, and with --merge merges and publishes. \
+                 Or delete {STATE_FILE} to start over",
+                st.progress().join("\n")
+            ),
+            Err(_) => bail!(
+                "a release is under way here ({STATE_FILE}); `shelf release apply --resume` \
+                 carries on with it, or delete the file to start over"
+            ),
+        }
     }
     if plan.releases.is_empty() {
         bail!("the plan has nothing to release");
@@ -343,6 +396,15 @@ fn sync(path: &Path, st: &mut State, group: &[String], resuming: bool) -> Result
             old_revs.insert(key, olds);
         }
         if !git::working_tree_clean(&r.path)? {
+            let cut = st.repos.get(repo).is_some_and(|s| s.cut_from.is_some());
+            if cut && st.head(repo).is_none() {
+                bail!(
+                    "{}: working tree is dirty; an apply stopped while writing the release \
+                     commit on {}. Discard those edits (they are remade), then --resume",
+                    r.repo,
+                    r.branch
+                );
+            }
             bail!(
                 "{}: working tree is dirty; commit or stash before releasing",
                 r.repo
@@ -385,7 +447,14 @@ fn sync(path: &Path, st: &mut State, group: &[String], resuming: bool) -> Result
                             crate::short_sha(&base_sha)
                         );
                     }
-                    git::git(&r.path, &["checkout", "--quiet", "-b", &r.branch, &base])?;
+                    let flag = if reusable_local_branch(&r, &base)? {
+                        "-B"
+                    } else {
+                        "-b"
+                    };
+                    git::git(&r.path, &["checkout", "--quiet", flag, &r.branch, &base])?;
+                    st.of(repo).cut_from = Some(base_sha);
+                    st.save(path)?;
                     let mut changed = release_edits(&st.plan, &r)?;
                     changed.extend(pin_edits(&r, &heads, &ref_heads, &old_revs)?);
                     let head = commit_and_push(&r, &changed, &release_message(&st.plan, &r))?;
@@ -430,6 +499,49 @@ fn sync(path: &Path, st: &mut State, group: &[String], resuming: bool) -> Result
         st.save(path)?;
     }
     Ok(())
+}
+
+/// Whether a local release branch is left over from a run that stopped
+/// before pushing it, holding nothing but the default branch and shelf's own
+/// release commit, so it can be cut again from `base` (`checkout -B`).
+/// `false` when there is no such branch; an error when the branch has
+/// anything else on it.
+fn reusable_local_branch(r: &RepoRelease, base: &str) -> Result<bool> {
+    let local = format!("refs/heads/{}", r.branch);
+    if git::git(&r.path, &["rev-parse", "--verify", "--quiet", &local]).is_err() {
+        return Ok(false);
+    }
+    let range = format!("{base}..{local}");
+    let commits = git::git(&r.path, &["log", "--format=%h %s", &range])?;
+    let ours = git::git(&r.path, &["log", "--format=%B%x00", &range])?;
+    let bodies: Vec<&str> = ours
+        .split('\0')
+        .map(str::trim)
+        .filter(|b| !b.is_empty())
+        .collect();
+    let only_release_commit = bodies.len() <= 1
+        && bodies
+            .iter()
+            .all(|b| b.starts_with("Release ") && b.ends_with(RELEASE_COMMIT_MARK));
+    if !only_release_commit {
+        bail!(
+            "{}: a local {} exists, not on origin, with commits other than shelf's release \
+             commit:\n{}\npush it, or delete it (`git branch -D {}`), then --resume",
+            r.repo,
+            r.branch,
+            commits
+                .lines()
+                .map(|l| format!("  {l}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            r.branch
+        );
+    }
+    println!(
+        "{}: cutting {} again over the local one an earlier run left unpushed",
+        r.repo, r.branch
+    );
+    Ok(true)
 }
 
 /// Check out the release branch at origin's head, refusing to drop local
@@ -648,7 +760,8 @@ fn release_message(plan: &Plan, r: &RepoRelease) -> String {
             if parents.len() == 1 { "its" } else { "their" }
         ));
     }
-    msg.push_str("\n\nMade by `shelf release apply`.");
+    msg.push_str("\n\n");
+    msg.push_str(RELEASE_COMMIT_MARK);
     msg
 }
 

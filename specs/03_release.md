@@ -152,6 +152,15 @@ their own pin moves, since they reach the root by `path = ".."`.
 `.shelf-release.json` beside the repositories, so a run that stops can be
 resumed: `shelf release apply --resume`.
 
+Each branch is recorded there (`cut_from`, the commit it was cut from) as soon
+as it exists locally, before its release commit is written and pushed. A run
+stopped in between leaves a local branch with at most that commit; `--resume`
+cuts it again from the up-to-date default branch (`checkout -B`), and stops,
+listing them, if the branch has any other commits. Starting a new release
+while one is under way is refused with each repository's step (not cut,
+cut but not pushed, pushed, PR open, merged, published) and what `--resume`
+will do.
+
 Publishing at the release branch's head, not the merge commit, is what lets
 everything happen at once. `shelf publish` already accepts any pushed commit,
 and the head commit is in the default branch after a merge-commit merge, with
