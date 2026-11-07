@@ -26,12 +26,16 @@ pub enum ReleaseCmd {
     Plan {
         #[command(flatten)]
         what: PlanArgs,
-        /// Print the plan as JSON (the input of `apply --from`).
+        /// Print the plan as JSON (the input of `apply --from`). Either way
+        /// the plan is also saved to .shelf-plan.json, which `apply` with no
+        /// tins applies.
         #[arg(long)]
         json: bool,
     },
     /// Cut every release branch of a cascade, preflight them together, open
-    /// the PRs, and (with --merge) merge and publish parents first.
+    /// the PRs, and (with --merge) merge and publish parents first. With no
+    /// tins, applies the plan `shelf release plan` saved here, as long as no
+    /// repository's default branch has moved since.
     Apply {
         #[command(flatten)]
         what: PlanArgs,
@@ -111,10 +115,15 @@ pub fn run(reg: &Registry, cmd: ReleaseCmd) -> Result<()> {
     match cmd {
         ReleaseCmd::Plan { what, json } => {
             let plan = make_plan(reg, &cwd, &what)?;
+            let text = serde_json::to_string_pretty(&plan)?;
+            let saved = cwd.join(PLAN_FILE);
+            std::fs::write(&saved, format!("{text}\n"))
+                .with_context(|| format!("could not write {}", saved.display()))?;
             if json {
-                println!("{}", serde_json::to_string_pretty(&plan)?);
+                println!("{text}");
             } else {
                 print!("{}", plan::render(&plan));
+                println!("saved to {PLAN_FILE}; `shelf release apply` with no tins applies it");
             }
             Ok(())
         }
@@ -161,11 +170,68 @@ pub fn run(reg: &Registry, cmd: ReleaseCmd) -> Result<()> {
                         format!("{path} is not a plan from `shelf release plan --json`")
                     })?
                 }
+                None if what.is_empty() => saved_plan(&cwd)?,
                 None => make_plan(reg, &cwd, &what)?,
             };
             apply::start(reg, &ws_root, plan, &opts)
         }
     }
+}
+
+/// Where `shelf release plan` saves the plan it printed, beside
+/// `.shelf-release.json`.
+pub const PLAN_FILE: &str = ".shelf-plan.json";
+
+/// The plan `shelf release plan` saved here, for `apply` with no tins; refused
+/// when a repository's default branch has moved since it was made.
+fn saved_plan(cwd: &Path) -> Result<plan::Plan> {
+    let path = cwd.join(PLAN_FILE);
+    if !path.exists() {
+        bail!(
+            "name the tins to release, or pass --changed; or run `shelf release plan` first, \
+             and `apply` with no tins applies the plan it saves"
+        );
+    }
+    let text = std::fs::read_to_string(&path)
+        .with_context(|| format!("could not read {}", path.display()))?;
+    let plan: plan::Plan = serde_json::from_str(&text)
+        .with_context(|| format!("{PLAN_FILE} is not a plan from `shelf release plan`"))?;
+    let mut stale = Vec::new();
+    for r in &plan.releases {
+        if !r.path.join(".git").exists() {
+            stale.push(format!("  {}: no checkout at {}", r.repo, r.path.display()));
+            continue;
+        }
+        let c = Checkout::open(&r.path)?;
+        if c.default_branch != r.default_branch {
+            stale.push(format!(
+                "  {}: default branch is {}, not {}",
+                r.repo, c.default_branch, r.default_branch
+            ));
+        } else if c.base != r.base {
+            stale.push(format!(
+                "  {}: {} is at {}, the plan was made at {}",
+                r.repo,
+                r.default_branch,
+                crate::short_sha(&c.base),
+                crate::short_sha(&r.base)
+            ));
+        }
+    }
+    if !stale.is_empty() {
+        bail!(
+            "the plan in {PLAN_FILE} is stale:\n{}\nre-run `shelf release plan` (with its tins \
+             and options) to make a new one",
+            stale.join("\n")
+        );
+    }
+    let tins: Vec<String> = plan
+        .releases
+        .iter()
+        .flat_map(|r| r.tins.iter().map(|t| format!("{} {}", t.name, t.next)))
+        .collect();
+    println!("applying the plan in {PLAN_FILE}: {}", tins.join(", "));
+    Ok(plan)
 }
 
 fn make_plan(reg: &Registry, cwd: &Path, what: &PlanArgs) -> Result<plan::Plan> {

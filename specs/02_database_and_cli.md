@@ -188,7 +188,8 @@ tin `--bump name=patch|minor|major`, or minor/major from `### Breaking` or
 `### Removed` under its CHANGELOG's `Unreleased`, or the highest level of its
 fragments in `changes/`, which it lists), and every pin that moves,
 in manifests and in CI workflows that pin the old commit exactly. Reads each
-repository at its fetched default branch; changes nothing.
+repository at its fetched default branch; changes no repository, and saves
+the plan to `.shelf-plan.json` in the directory it runs from.
 
 - `--changed` — every tin checked out here with non-release commits since its
   published commit (merges and subjects starting `Release` don't count).
@@ -197,8 +198,10 @@ repository at its fetched default branch; changes nothing.
 
 ### shelf release apply
 
-Takes the same arguments as `plan` (or `--from <plan.json>`) and carries the
-plan out: a branch `release/<tin>-<version>` per repository from its
+Takes the same arguments as `plan` (or `--from <plan.json>`), or none, which
+applies the plan `plan` saved in `.shelf-plan.json` (and says so) as long as
+every repository's default branch is still at the plan's commit; a stale plan
+is refused with a request to re-run `plan`. It carries the plan out: a branch `release/<tin>-<version>` per repository from its
 up-to-date default branch, parents first, with the versions, the changelog,
 every pin set to its parent's release-branch head, and `pixi lock`; committed
 and pushed. Then a preflight (one scratch pixi project adding every release

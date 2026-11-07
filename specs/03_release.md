@@ -100,14 +100,29 @@ by its git URL's last path segment, or `--repo name=path`).
    tin's [changelog fragments](#changelog-fragments) raises it further, for
    any tin in the cascade; `--bump` still overrides both.
 4. **Print the plan**: tin, current → next version, why it's in, and each pin
-   it moves (file, table, old → new rev). `plan` changes nothing. `--json`
-   prints it for scripts.
+   it moves (file, table, old → new rev). `plan` changes no repository.
+   `--json` prints it for scripts. Either way it also saves the plan to
+   `.shelf-plan.json` in the directory it runs from, beside
+   `.shelf-release.json`, for `apply` to take.
 
 Tins in a subdirectory of a repository (`full/`) are released with their root
 at the same commit, as `shelf publish` already requires; they don't need
 their own pin moves, since they reach the root by `path = ".."`.
 
-### shelf release apply [--from <plan.json>]
+### shelf release apply [<tin>… | --from <plan.json> | --resume]
+
+What it applies:
+
+- named tins (or `--changed`, with any of `plan`'s options): a fresh plan,
+  made as `plan` would make it;
+- `--from <plan.json>`: a plan saved with `plan --json`;
+- nothing: the plan `plan` saved in `.shelf-plan.json`, so the tins and
+  `--bump`s aren't repeated. It prints which plan it applies (its tins and
+  versions). Every repository's default branch must still be at the commit
+  the plan was made from; if one moved, `apply` refuses, names it, and asks
+  for a new `plan`. With no `.shelf-plan.json` it asks for tins or a `plan`
+  first;
+- `--resume`: the release under way in `.shelf-release.json` (below).
 
 1. **Branches, all at once.** For each repository in the cascade, from its
    up-to-date default branch, a branch `release/<tin>-<version>`:

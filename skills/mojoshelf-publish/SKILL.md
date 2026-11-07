@@ -154,9 +154,14 @@ the repositories side by side:
 
 ```sh
 shelf release plan deflate-mojo        # the cascade, versions, every pin that moves
-shelf release apply deflate-mojo       # branches, preflight, PRs (gh)
+shelf release apply                    # that plan: branches, preflight, PRs (gh)
 shelf release apply --resume --merge   # once green: merge and publish, parents first
 ```
+
+`plan` saves what it printed to `.shelf-plan.json`, and `apply` with no tins
+applies it (shelf 0.9+), refusing if a repository's default branch has moved
+since; then run `plan` again. Before 0.9, repeat the tins and every `--bump`:
+`shelf release apply deflate-mojo`.
 
 `apply` cuts every release branch at once, each pinning its parents' release
 heads, builds them together before opening any PR, and keeps its progress in

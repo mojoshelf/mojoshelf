@@ -768,6 +768,73 @@ fn apply_cuts_resumes_after_a_fix_and_publishes_parents_first() {
 }
 
 #[test]
+fn apply_with_no_tins_applies_the_saved_plan() {
+    let fx = fixture();
+    let (ok, err) = fx.shelf(&["release", "apply", "--skip-preflight"]);
+    assert!(
+        !ok && err.contains("run `shelf release plan` first"),
+        "{err}"
+    );
+
+    let out = fx.ok(&[
+        "release",
+        "plan",
+        "base1-mojo",
+        "base2-mojo",
+        "--bump",
+        "base2-mojo=minor",
+    ]);
+    assert!(out.contains("saved to .shelf-plan.json"), "{out}");
+    let saved: Value =
+        serde_json::from_str(&std::fs::read_to_string(fx.ws.join(".shelf-plan.json")).unwrap())
+            .unwrap();
+    assert_eq!(saved["releases"].as_array().unwrap().len(), 4);
+
+    let out = fx.ok(&["release", "apply", "--skip-preflight"]);
+    assert!(
+        out.contains("applying the plan in .shelf-plan.json: base1-mojo 0.2.0, base2-mojo 1.1.0"),
+        "{out}"
+    );
+    assert_eq!(
+        fx.remote_head("base2", "release/base2-mojo-1.1.0").len(),
+        40,
+        "the plan's --bump carried over"
+    );
+    assert_eq!(fx.remote_head("top", "release/top-mojo-2.1.1").len(), 40);
+}
+
+#[test]
+fn a_stale_saved_plan_is_refused() {
+    let fx = fixture();
+    let out = fx.ok(&["release", "plan", "base1-mojo", "--json"]);
+    let printed: Value = serde_json::from_str(&out).unwrap();
+    let saved: Value =
+        serde_json::from_str(&std::fs::read_to_string(fx.ws.join(".shelf-plan.json")).unwrap())
+            .unwrap();
+    assert_eq!(printed, saved, "--json prints what it saves");
+
+    push_files(&fx, "mid", &[("NOTES", "moved\n")], "Move main on");
+    let (ok, err) = fx.shelf(&["release", "apply", "--skip-preflight"]);
+    assert!(
+        !ok && err.contains("is stale")
+            && err.contains("mid: main is at")
+            && err.contains("re-run `shelf release plan`"),
+        "{err}"
+    );
+    assert!(!fx.ws.join(".shelf-release.json").exists());
+    assert!(fx
+        .remote_head("base1", "release/base1-mojo-0.2.0")
+        .is_empty());
+
+    // Naming the tins still makes a fresh plan.
+    fx.ok(&["release", "apply", "base1-mojo", "--skip-preflight"]);
+    assert_eq!(
+        fx.remote_head("base1", "release/base1-mojo-0.2.0").len(),
+        40
+    );
+}
+
+#[test]
 fn waves_cut_one_level_at_a_time() {
     let fx = fixture();
     fx.ok(&[
