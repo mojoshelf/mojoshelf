@@ -778,114 +778,6 @@ fn apply_cuts_resumes_after_a_fix_and_publishes_parents_first() {
     assert!(out.contains("is finished"), "{out}");
 }
 
-#[cfg(unix)]
-/// A `pixi` that answers `--version` and, for `install`, prints
-/// `$FAKE_PIXI_LOG` and exits with `$FAKE_PIXI_EXIT`.
-fn fake_pixi(fx: &Fixture, log: &str, exit: i32) -> Vec<(&'static str, String)> {
-    let bin = fx.root.join("bin");
-    std::fs::create_dir_all(&bin).unwrap();
-    let script = bin.join("pixi");
-    std::fs::write(
-        &script,
-        "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'pixi 0.0.0'; exit 0; fi\n\
-         cat \"$FAKE_PIXI_LOG\"\nexit \"$FAKE_PIXI_EXIT\"\n",
-    )
-    .unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let log_file = fx.root.join("pixi-output.log");
-    std::fs::write(&log_file, log).unwrap();
-    vec![
-        (
-            "PATH",
-            format!("{}:{}", bin.display(), std::env::var("PATH").unwrap()),
-        ),
-        ("FAKE_PIXI_LOG", log_file.display().to_string()),
-        ("FAKE_PIXI_EXIT", exit.to_string()),
-    ]
-}
-
-#[cfg(unix)]
-fn build_box(recipe: &str, body: &[&str], secs: u32) -> String {
-    let mut out = format!(" ╭─ Running build for recipe: {recipe}\n │\n");
-    for _ in 0..50 {
-        out.push_str(" │ │ noise from the build\n");
-    }
-    for l in body {
-        out.push_str(&format!(" │ │ {l}\n"));
-    }
-    out.push_str(&format!(
-        " │\n ╰─────────────────── (took {secs} seconds)\n"
-    ));
-    out
-}
-
-#[cfg(unix)]
-#[test]
-fn preflight_prints_a_line_per_package_and_the_failed_build() {
-    let fx = fixture();
-    let log = format!(
-        "{}{}Error:   × failed to build 'base1-mojo'\n",
-        build_box("mid-full-mojo-0.1.1-h60d57d3_0", &["built fine"], 9),
-        build_box(
-            "base1-mojo-0.2.0-h60d57d3_0",
-            &[
-                "lib.mojo:3:1: error: use of unknown declaration",
-                "× error Script failed with status 1"
-            ],
-            6
-        ),
-    );
-    let env = fake_pixi(&fx, &log, 1);
-    let (ok, out) = fx.shelf_env(&["release", "apply", "base1-mojo"], &env);
-    assert!(!ok, "{out}");
-    assert!(
-        out.contains("preflight:   built  mid-full-mojo 0.1.1 (9 seconds)")
-            && out.contains("preflight:   failed base1-mojo 0.2.0 (6 seconds)"),
-        "{out}"
-    );
-    assert!(
-        out.contains("lib.mojo:3:1: error: use of unknown declaration")
-            && out.contains("Error:   × failed to build 'base1-mojo'")
-            && out.contains("preflight: the whole log is "),
-        "{out}"
-    );
-    assert!(
-        out.matches("noise from the build").count() < 40,
-        "only the end of the failed build: {out}"
-    );
-    let path = out
-        .split("preflight: the whole log is ")
-        .nth(1)
-        .unwrap()
-        .lines()
-        .next()
-        .unwrap();
-    assert_eq!(std::fs::read_to_string(path).unwrap(), log);
-
-    // --verbose passes pixi's output through whole.
-    let (ok, out) = fx.shelf_env(&["release", "apply", "--resume", "--verbose"], &env);
-    assert!(!ok);
-    assert_eq!(out.matches("noise from the build").count(), 100, "{out}");
-    assert!(!out.contains("preflight:   built"), "{out}");
-}
-
-#[cfg(unix)]
-#[test]
-fn a_passing_preflight_is_a_line_per_package() {
-    let fx = fixture();
-    let log = build_box("base1-mojo-0.2.0-h60d57d3_0", &[], 3);
-    let env = fake_pixi(&fx, &log, 0);
-    let out = fx.ok_env(&["release", "apply", "base1-mojo"], &env);
-    assert!(
-        out.contains("preflight:   built  base1-mojo 0.2.0 (3 seconds)")
-            && out.contains("preflight: 1 package built")
-            && out.contains("preflight passed"),
-        "{out}"
-    );
-    assert!(!out.contains("noise from the build"), "{out}");
-}
-
 #[test]
 fn waves_cut_one_level_at_a_time() {
     let fx = fixture();
@@ -1288,4 +1180,112 @@ fn changes_new_and_check() {
     git(&dir, &["commit", "--quiet", "-am", "Typo"]);
     let (ok, out) = shelf(&check);
     assert!(!ok && out.contains("bad first line"), "{out}");
+}
+
+#[cfg(unix)]
+/// A `pixi` that answers `--version` and, for `install`, prints
+/// `$FAKE_PIXI_LOG` and exits with `$FAKE_PIXI_EXIT`.
+fn fake_pixi(fx: &Fixture, log: &str, exit: i32) -> Vec<(&'static str, String)> {
+    let bin = fx.root.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let script = bin.join("pixi");
+    std::fs::write(
+        &script,
+        "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'pixi 0.0.0'; exit 0; fi\n\
+         cat \"$FAKE_PIXI_LOG\"\nexit \"$FAKE_PIXI_EXIT\"\n",
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let log_file = fx.root.join("pixi-output.log");
+    std::fs::write(&log_file, log).unwrap();
+    vec![
+        (
+            "PATH",
+            format!("{}:{}", bin.display(), std::env::var("PATH").unwrap()),
+        ),
+        ("FAKE_PIXI_LOG", log_file.display().to_string()),
+        ("FAKE_PIXI_EXIT", exit.to_string()),
+    ]
+}
+
+#[cfg(unix)]
+fn build_box(recipe: &str, body: &[&str], secs: u32) -> String {
+    let mut out = format!(" ╭─ Running build for recipe: {recipe}\n │\n");
+    for _ in 0..50 {
+        out.push_str(" │ │ noise from the build\n");
+    }
+    for l in body {
+        out.push_str(&format!(" │ │ {l}\n"));
+    }
+    out.push_str(&format!(
+        " │\n ╰─────────────────── (took {secs} seconds)\n"
+    ));
+    out
+}
+
+#[cfg(unix)]
+#[test]
+fn preflight_prints_a_line_per_package_and_the_failed_build() {
+    let fx = fixture();
+    let log = format!(
+        "{}{}Error:   × failed to build 'base1-mojo'\n",
+        build_box("mid-full-mojo-0.1.1-h60d57d3_0", &["built fine"], 9),
+        build_box(
+            "base1-mojo-0.2.0-h60d57d3_0",
+            &[
+                "lib.mojo:3:1: error: use of unknown declaration",
+                "× error Script failed with status 1"
+            ],
+            6
+        ),
+    );
+    let env = fake_pixi(&fx, &log, 1);
+    let (ok, out) = fx.shelf_env(&["release", "apply", "base1-mojo"], &env);
+    assert!(!ok, "{out}");
+    assert!(
+        out.contains("preflight:   built  mid-full-mojo 0.1.1 (9 seconds)")
+            && out.contains("preflight:   failed base1-mojo 0.2.0 (6 seconds)"),
+        "{out}"
+    );
+    assert!(
+        out.contains("lib.mojo:3:1: error: use of unknown declaration")
+            && out.contains("Error:   × failed to build 'base1-mojo'")
+            && out.contains("preflight: the whole log is "),
+        "{out}"
+    );
+    assert!(
+        out.matches("noise from the build").count() < 40,
+        "only the end of the failed build: {out}"
+    );
+    let path = out
+        .split("preflight: the whole log is ")
+        .nth(1)
+        .unwrap()
+        .lines()
+        .next()
+        .unwrap();
+    assert_eq!(std::fs::read_to_string(path).unwrap(), log);
+
+    // --verbose passes pixi's output through whole.
+    let (ok, out) = fx.shelf_env(&["release", "apply", "--resume", "--verbose"], &env);
+    assert!(!ok);
+    assert_eq!(out.matches("noise from the build").count(), 100, "{out}");
+    assert!(!out.contains("preflight:   built"), "{out}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_passing_preflight_is_a_line_per_package() {
+    let fx = fixture();
+    let log = build_box("base1-mojo-0.2.0-h60d57d3_0", &[], 3);
+    let env = fake_pixi(&fx, &log, 0);
+    let out = fx.ok_env(&["release", "apply", "base1-mojo"], &env);
+    assert!(
+        out.contains("preflight:   built  base1-mojo 0.2.0 (3 seconds)")
+            && out.contains("preflight: 1 package built")
+            && out.contains("preflight passed"),
+        "{out}"
+    );
+    assert!(!out.contains("noise from the build"), "{out}");
 }
