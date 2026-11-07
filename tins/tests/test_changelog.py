@@ -18,7 +18,7 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
-from tins.commands import _changelog_gap, _describes_unreleased_work, _has_entries
+from tins.commands import _changelog_gap, _fragment_files, _describes_unreleased_work, _has_entries
 
 PREAMBLE = """# Changelog
 
@@ -47,9 +47,12 @@ def changelog(*sections: str) -> str:
     return PREAMBLE + "\n" + "\n".join(sections) + "\n" + PUBLISHED
 
 
-def gap(text: str | None, published: str = "0.6.7") -> str | None:
+def gap(text: str | None, published: str = "0.6.7", fragments=None) -> str | None:
     """The finding message for a repo owed a release, or None if it is clear."""
-    with mock.patch("tins.commands.read_at_ref", return_value=text):
+    with (
+        mock.patch("tins.commands.read_at_ref", return_value=text),
+        mock.patch("tins.commands._fragment_files", return_value=fragments or []),
+    ):
         return _changelog_gap(mock.Mock(path="/tmp", ref="deadbeef"), published)
 
 
@@ -153,6 +156,49 @@ class TestTheTwoCasesAreToldApart(unittest.TestCase):
         self.assertIsNone(gap(changelog("## [Unreleased]\n\n### Added\n- A thing.\n")))
 
 
+class TestFragments(unittest.TestCase):
+    """A repo that keeps `changes/*.md` fragments has no `[Unreleased]`."""
+
+    def test_fragments_cover_an_empty_unreleased(self):
+        self.assertIsNone(gap(changelog("## [Unreleased]\n"), fragments=["changes/1-x.md"]))
+
+    def test_fragments_cover_a_missing_changelog(self):
+        self.assertIsNone(gap(None, fragments=["full/changes/1-x.md"]))
+
+    def test_no_fragments_still_reports(self):
+        self.assertIsNotNone(gap(changelog("## [Unreleased]\n")))
+
+    def _listing(self, files):
+        from tins import commands
+
+        repo = mock.Mock(path="/tmp", ref="deadbeef")
+        with mock.patch.object(commands.gitutil, "run", return_value=("\n".join(files), "", 0)):
+            return _fragment_files(repo)
+
+    def test_readme_and_other_files_are_not_fragments(self):
+        self.assertEqual(
+            self._listing([
+                "changes/README.md", "changes/1-x.md", "changes/notes.txt",
+                "full/changes/2-y.minor.md", "src/changes/deep/z.md", "docs/changes.md",
+            ]),
+            ["changes/1-x.md", "full/changes/2-y.minor.md"],
+        )
+
+    def test_only_a_readme_is_no_fragment(self):
+        self.assertEqual(self._listing(["changes/README.md"]), [])
+
+    def test_working_tree_listing(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "changes").mkdir()
+            (root / "changes" / "README.md").write_text("r")
+            (root / "changes" / "1-a.md").write_text("- A.")
+            self.assertEqual(_fragment_files(mock.Mock(path=root, ref=None)), ["changes/1-a.md"])
+
+
 class TestItFiresOnlyWhereAReleaseIsOwed(unittest.TestCase):
     """The whole design constraint. Only 3 of ~22 magmalake repos have a
     CHANGELOG.md, and that is deliberate — one is started when a project next
@@ -188,6 +234,7 @@ class TestItFiresOnlyWhereAReleaseIsOwed(unittest.TestCase):
             mock.patch.object(commands, "_changed_paths", return_value=["src/lib.mojo"]),
             mock.patch.object(commands, "_packaged_changes", return_value=["src/lib.mojo"]),
             mock.patch.object(commands, "read_at_ref", return_value=repo_text),
+            mock.patch.object(commands, "_fragment_files", return_value=[]),
         ):
             _, findings = commands.diagnose(mock.Mock(registry="r"), args)
         return findings
