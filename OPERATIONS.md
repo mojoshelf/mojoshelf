@@ -103,7 +103,8 @@ cd crates/shelf-worker && npx wrangler deploy
 
 `npx wrangler deploy` publishes whatever is in your working tree, so commit
 first if you want the deployed Worker to match a commit. CI only deploys on
-`cli-v*` tags, so pushing to `main` does not deploy.
+`cli-v*` tags (migrations first, then the Worker), so pushing to `main` does
+not deploy.
 
 ### Migrations come first
 
@@ -133,13 +134,9 @@ git checkout main && git pull --ff-only
 git tag cli-vX.Y.Z && git push origin cli-vX.Y.Z
 ```
 
-Until `CLOUDFLARE_API_TOKEN` is set in CI (#39) that workflow does not deploy
-the Worker. Pull `main` once it finishes, then deploy by hand, running any
-pending D1 migrations first (see above):
-
-```sh
-cd crates/shelf-worker && npx wrangler deploy
-```
+The workflow then applies any pending D1 migrations and deploys the Worker, so
+mojoshelf.org serves the new channel when it finishes. It fails, rather than
+skipping the deploy, if the repo's `CLOUDFLARE_API_TOKEN` secret is missing.
 
 Verify with `pixi global update mojoshelf && shelf --version`.
 
