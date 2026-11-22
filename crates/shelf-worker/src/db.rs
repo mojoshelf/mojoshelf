@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use worker::wasm_bindgen::JsValue;
 use worker::{D1Database, Result};
 
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
 pub struct TinRow {
     pub id: i64,
     pub name: String,
@@ -89,6 +89,19 @@ pub struct VersionRow {
     pub version: String,
     pub commit_sha: String,
     pub published_at: String,
+    pub url: Option<String>,
+    pub subdirectory: Option<String>,
+}
+
+impl VersionRow {
+    /// The repository and subdirectory holding this version's commit: where it
+    /// was published, or the tin's own for a version that recorded none.
+    pub fn source(&self, tin: &TinRow) -> (String, Option<String>) {
+        match &self.url {
+            Some(url) => (url.clone(), self.subdirectory.clone()),
+            None => (tin.url.clone(), tin.subdirectory.clone()),
+        }
+    }
 }
 
 pub async fn tin_by_name(d1: &D1Database, name: &str) -> Result<Option<TinRow>> {
@@ -99,12 +112,15 @@ pub async fn tin_by_name(d1: &D1Database, name: &str) -> Result<Option<TinRow>> 
 }
 
 pub async fn versions_of(d1: &D1Database, tin_id: i64) -> Result<Vec<VersionRow>> {
-    d1.prepare("SELECT id, version, commit_sha, published_at FROM versions WHERE tin_id = ?1")
-        .bind(&[JsValue::from(tin_id as f64)])?
-        .all()
-        .await
-        .at()?
-        .results::<VersionRow>()
+    d1.prepare(
+        "SELECT id, version, commit_sha, published_at, url, subdirectory \
+         FROM versions WHERE tin_id = ?1",
+    )
+    .bind(&[JsValue::from(tin_id as f64)])?
+    .all()
+    .await
+    .at()?
+    .results::<VersionRow>()
 }
 
 /// Every source tin with all its published versions, for the publish-time pin
@@ -304,18 +320,30 @@ pub async fn tin_detail(d1: &D1Database, name: &str) -> Result<Option<TinDetail>
     }))
 }
 
-/// Inserts a version and its dependency rows in one atomic batch.
+/// Inserts a version and its dependency rows in one atomic batch. `url` and
+/// `subdirectory` are where the version was published from.
 pub async fn insert_version(
     d1: &D1Database,
     tin_id: i64,
     version: &str,
     commit_sha: &str,
+    url: &str,
+    subdirectory: Option<&str>,
     dep_ids: &[i64],
 ) -> Result<()> {
     let tin_id_js = JsValue::from(tin_id as f64);
     let mut stmts = vec![d1
-        .prepare("INSERT INTO versions (tin_id, version, commit_sha) VALUES (?1, ?2, ?3)")
-        .bind(&[tin_id_js.clone(), version.into(), commit_sha.into()])?];
+        .prepare(
+            "INSERT INTO versions (tin_id, version, commit_sha, url, subdirectory) \
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+        )
+        .bind(&[
+            tin_id_js.clone(),
+            version.into(),
+            commit_sha.into(),
+            url.into(),
+            subdirectory.map(JsValue::from).unwrap_or(JsValue::NULL),
+        ])?];
     for dep_id in dep_ids {
         stmts.push(
             d1.prepare(
@@ -888,4 +916,67 @@ pub async fn set_verified(
         .await
         .at()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn version(url: Option<&str>, subdirectory: Option<&str>) -> VersionRow {
+        VersionRow {
+            id: 1,
+            version: "0.1.0".into(),
+            commit_sha: "c981becfc6fb".into(),
+            published_at: "2026-11-14T16:32:40Z".into(),
+            url: url.map(str::to_string),
+            subdirectory: subdirectory.map(str::to_string),
+        }
+    }
+
+    fn moved_tin() -> TinRow {
+        TinRow {
+            url: "https://github.com/amarbaro/mojo-libs.git".into(),
+            subdirectory: Some("libs/struct".into()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_version_from_before_a_move_keeps_its_repository() {
+        // Published at the root of the old repository, before the tin moved
+        // into a monorepo subdirectory: its commit exists only there.
+        let old = version(Some("https://github.com/amarbaro/mojo-struct.git"), None);
+        assert_eq!(
+            old.source(&moved_tin()),
+            ("https://github.com/amarbaro/mojo-struct.git".into(), None)
+        );
+    }
+
+    #[test]
+    fn a_version_published_from_a_subdirectory_keeps_it() {
+        let new = version(
+            Some("https://github.com/amarbaro/mojo-libs.git"),
+            Some("libs/struct"),
+        );
+        assert_eq!(
+            new.source(&moved_tin()),
+            (
+                "https://github.com/amarbaro/mojo-libs.git".into(),
+                Some("libs/struct".into())
+            )
+        );
+    }
+
+    #[test]
+    fn a_version_that_recorded_nothing_follows_the_tin() {
+        // Rows from before versions recorded their source, on a tin that
+        // never moved.
+        assert_eq!(
+            version(None, None).source(&moved_tin()),
+            (
+                "https://github.com/amarbaro/mojo-libs.git".into(),
+                Some("libs/struct".into())
+            )
+        );
+    }
 }
