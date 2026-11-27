@@ -497,17 +497,20 @@ async fn api_resolve(req: Request, ctx: RouteContext<()>) -> Result<Response> {
             queue.push_back((dep.clone(), None));
         }
         deps_of.insert(tin.name.clone(), names);
+        // The version's own repository: a tin that moved still installs its
+        // older versions from where their commits are.
+        let (url, subdirectory) = chosen.source(&tin);
         found.insert(
             tin.name.clone(),
             ResolvedTin {
                 name: tin.name,
-                url: tin.url,
+                url,
                 version: chosen.version.clone(),
                 commit_sha: chosen.commit_sha.clone(),
                 kind: "source".into(),
                 prev_url: tin.prev_url,
                 url_changed_at: tin.url_changed_at,
-                subdirectory: tin.subdirectory,
+                subdirectory,
             },
         );
     }
@@ -722,9 +725,17 @@ async fn api_publish(mut req: Request, ctx: RouteContext<()>) -> Result<Response
             None => return error_json(&format!("dependency '{dep}' is not a registered tin"), 400),
         }
     }
-    db::insert_version(&d1, tin.id, &body.version, &body.commit_sha, &dep_ids)
-        .await
-        .at()?;
+    db::insert_version(
+        &d1,
+        tin.id,
+        &body.version,
+        &body.commit_sha,
+        &body.url,
+        subdirectory.as_deref(),
+        &dep_ids,
+    )
+    .await
+    .at()?;
     // Verification badges come from the weekly tin-smoke sweep, so without
     // this a tin published just after a sweep looks unverified for a week.
     // Best effort: the publish has already succeeded either way.
